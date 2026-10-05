@@ -1,6 +1,8 @@
 package tech.iflink.seuwiki.models
 
+import androidx.annotation.StringRes
 import kotlinx.serialization.Serializable
+import tech.iflink.seuwiki.R
 
 /** A course in the timetable; shared by the Tools grid and the Home bento. */
 @Serializable
@@ -75,10 +77,10 @@ data class CampusReminder(
 /** A Tools-grid entry. [iconKey] is an SF Symbol name, resolved by `SeuIcons`. */
 data class ToolItem(
     val id: String,
-    val name: String,
+    @StringRes val nameRes: Int,
     val iconKey: String,
     val tintKey: String,
-    val subtitle: String,
+    @StringRes val subtitleRes: Int,
     /**
      * 真的能打开吗？
      *
@@ -116,14 +118,14 @@ data class HandbookEntry(
 object ToolCatalog {
 
     val tools: List<ToolItem> = listOf(
-        ToolItem("timetable", "课表", "calendar.day.timeline.left", "blue", "今日课程与周视图", isAvailable = true),
-        ToolItem("gpa", "绩点计算", "percent", "green", "五分制换算", isAvailable = true),
-        ToolItem("exam", "考试安排", "pencil.and.list.clipboard", "orange", "期末倒计时"),
-        ToolItem("library", "图书馆", "books.vertical", "purple", "借阅与研讨间"),
-        ToolItem("card", "校园卡", "creditcard", "pink", "余额与流水"),
-        ToolItem("bus", "班车查询", "bus", "teal", "三校区通勤"),
-        ToolItem("map", "校园地图", "map", "mint", "楼宇导航"),
-        ToolItem("elective", "选课助手", "checklist", "indigo", "避雷与推荐"),
+        ToolItem("timetable", R.string.tool_timetable, "calendar.day.timeline.left", "blue", R.string.tool_timetable_sub, isAvailable = true),
+        ToolItem("gpa", R.string.tool_gpa, "percent", "green", R.string.tool_gpa_sub, isAvailable = true),
+        ToolItem("exam", R.string.tool_exam, "pencil.and.list.clipboard", "orange", R.string.tool_exam_sub),
+        ToolItem("library", R.string.tool_library, "books.vertical", "purple", R.string.tool_library_sub),
+        ToolItem("card", R.string.tool_card, "creditcard", "pink", R.string.tool_card_sub),
+        ToolItem("bus", R.string.tool_bus, "bus", "teal", R.string.tool_bus_sub),
+        ToolItem("map", R.string.tool_map, "map", "mint", R.string.tool_map_sub),
+        ToolItem("elective", R.string.tool_elective, "checklist", "indigo", R.string.tool_elective_sub),
     )
 
     fun tool(id: String): ToolItem? = tools.firstOrNull { it.id == id }

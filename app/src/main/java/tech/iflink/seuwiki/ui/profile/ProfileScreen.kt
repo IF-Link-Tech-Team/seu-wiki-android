@@ -1,5 +1,6 @@
 package tech.iflink.seuwiki.ui.profile
 
+import androidx.compose.ui.res.stringArrayResource
 import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -49,7 +50,6 @@ import tech.iflink.seuwiki.design.SectionHeader
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
-import tech.iflink.seuwiki.design.forumCompactCount
 import tech.iflink.seuwiki.models.CampusReminder
 import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.ui.DetailHeader
@@ -67,27 +67,18 @@ import tech.iflink.seuwiki.ui.rows.InitialsAvatar
  * matching chip.
  */
 private object PersonaOptions {
-    val colleges = listOf(
-        "建筑学院", "机械工程学院", "能源与环境学院", "信息科学与工程学院",
-        "土木工程学院", "电子科学与工程学院", "数学学院", "自动化学院",
-        "计算机科学与工程学院", "软件学院", "集成电路学院", "网络空间安全学院",
-        "物理学院", "化学化工学院", "经济管理学院", "电气工程学院",
-        "外国语学院", "交通学院", "仪器科学与工程学院", "材料科学与工程学院",
-        "生物科学与医学工程学院", "生命科学与技术学院", "医学院", "公共卫生学院",
-        "法学院", "人文学院", "艺术学院", "体育系",
-    )
+    // 这些是 @Composable getter：选项表搬到 strings.xml 之后必须在 composable
+    // 上下文里读，但调用点（PersonaSection）本来就是 composable，所以成立。
+    val colleges: List<String> @Composable get() = stringArrayResource(R.array.seu_colleges).toList()
 
-    val degrees = listOf("本科", "硕士", "博士")
+    val degrees: List<String> @Composable get() = stringArrayResource(R.array.profile_degrees).toList()
 
-    val grades = listOf(
-        "大一", "大二", "大三", "大四", "大五",
-        "研一", "研二", "研三",
-        "博一", "博二", "博三", "博四", "博五",
-    )
+    val grades: List<String>
+        @Composable get() = stringArrayResource(R.array.profile_grades_undergrad).toList() +
+            stringArrayResource(R.array.profile_grades_grad).toList() +
+            stringArrayResource(R.array.profile_grades_doctor).toList()
 
-    val interests = listOf(
-        "保研", "考研", "留学", "SRTP", "数学建模", "竞赛", "实习", "校园生活",
-    )
+    val interests: List<String> @Composable get() = stringArrayResource(R.array.profile_interest_tags).toList()
 }
 
 /**
@@ -113,7 +104,7 @@ fun ProfileScreen(
         // 底部留白交给内层列表的 ListBottomPadding（已含 tab bar + 导航栏 inset），
         // 根容器再叠一次 navigationBarsPadding 会在三键导航下多出约 48dp 死空间。
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = "个人页", onBack = onBack)
+            DetailHeader(title = stringResource(R.string.profile_title), onBack = onBack)
             LazyColumn(
                 contentPadding = PaddingValues(
                     start = 16.dp,
@@ -157,25 +148,30 @@ fun ProfileScreen(
 private fun IdentityCard(profile: UserProfileStore, auth: AuthStore) {
     val colors = SeuTheme.colors
     val session = auth.session
+    val context = LocalContext.current
+    // Logto 既没给 name、邮箱又是 @ 开头时，AuthStore 存的是空串（它拿不到 Context，
+    // 也没必要把界面文案写进持久化的会话里）。兜底在这里做。
+    val displayName = session?.displayName
+        ?.ifEmpty { stringResource(R.string.profile_default_display_name) }
     CardColumn(spacing = 12.dp) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            InitialsAvatar(session?.displayName ?: "未登录", size = 56.dp)
+            InitialsAvatar(displayName ?: stringResource(R.string.profile_not_logged_in), size = 56.dp)
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = session?.displayName ?: "未登录",
+                    text = displayName ?: stringResource(R.string.profile_not_logged_in),
                     style = SeuType.Headline,
                     color = colors.label,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = session?.email ?: "登录 IF.Link 账号，同步收藏、提醒与关注的话题",
+                    text = session?.email ?: stringResource(R.string.profile_login_hint),
                     style = SeuType.Footnote,
                     color = colors.secondaryLabel,
                     maxLines = 2,
@@ -186,9 +182,9 @@ private fun IdentityCard(profile: UserProfileStore, auth: AuthStore) {
         if (session != null && session.subject.isNotEmpty()) {
             AboutLine(label = "IF.Link ID", value = session.subject)
         }
-        auth.lastError?.let { message ->
+        auth.lastError?.let { err ->
             Text(
-                text = message,
+                text = err.format(context),
                 style = SeuType.Footnote,
                 color = colors.red,
                 maxLines = 2,
@@ -222,9 +218,9 @@ private fun LoginRow(auth: AuthStore) {
     val colors = SeuTheme.colors
     val configured = auth.isConfigured
     val label = when {
-        auth.isBusy -> "正在登录…"
-        configured -> "登录 IF.Link 账号"
-        else -> "登录服务配置中"
+        auth.isBusy -> stringResource(R.string.profile_logging_in)
+        configured -> stringResource(R.string.profile_login)
+        else -> stringResource(R.string.profile_login_unconfigured)
     }
     Box(
         modifier = Modifier
@@ -297,7 +293,7 @@ private fun LogoutRow(auth: AuthStore) {
                 .padding(vertical = 15.dp),
             horizontalArrangement = Arrangement.Center,
         ) {
-            Text("退出登录", style = SeuType.Headline, color = colors.red)
+            Text(stringResource(R.string.profile_sign_out), style = SeuType.Headline, color = colors.red)
         }
     }
 }
@@ -317,10 +313,10 @@ private fun PersonaSection(
 ) {
     val colors = SeuTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(title = "我的画像", actionLabel = null)
+        SectionHeader(title = stringResource(R.string.profile_section_persona), actionLabel = null)
         CardColumn(padding = 0.dp) {
             PersonaRow(
-                label = "学院",
+                label = stringResource(R.string.profile_college),
                 value = profile.college,
                 options = PersonaOptions.colleges,
                 expanded = expanded == "college",
@@ -329,7 +325,7 @@ private fun PersonaSection(
             )
             InsetDivider(leading = 16.dp)
             PersonaRow(
-                label = "学段",
+                label = stringResource(R.string.profile_degree),
                 value = profile.degree,
                 options = PersonaOptions.degrees,
                 expanded = expanded == "degree",
@@ -338,7 +334,7 @@ private fun PersonaSection(
             )
             InsetDivider(leading = 16.dp)
             PersonaRow(
-                label = "年级",
+                label = stringResource(R.string.profile_grade),
                 value = profile.grade,
                 options = PersonaOptions.grades,
                 expanded = expanded == "grade",
@@ -348,7 +344,7 @@ private fun PersonaSection(
             InsetDivider(leading = 16.dp)
             Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("兴趣标签", style = SeuType.Body, color = colors.label)
+                    Text(stringResource(R.string.profile_interests), style = SeuType.Body, color = colors.label)
                     Spacer(Modifier.weight(1f))
                     Text(
                         text = profile.interests.joinToString("、"),
@@ -386,7 +382,7 @@ private fun PersonaSection(
             }
         }
         Text(
-            text = "画像用于主页「为你推荐」匹配，未登录也可编辑。",
+            text = stringResource(R.string.profile_persona_note),
             style = SeuType.Footnote,
             color = colors.secondaryLabel,
         )
@@ -476,11 +472,11 @@ private fun FollowedTopicsSection(profile: UserProfileStore) {
     val followed = TopicCatalog.topics.filter { it.slug in profile.followedTopicIds }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(title = "关注的话题", actionLabel = null)
+        SectionHeader(title = stringResource(R.string.profile_section_following), actionLabel = null)
         if (followed.isEmpty()) {
             CardColumn {
                 Text(
-                    text = "暂无关注，去论坛话题页看看",
+                    text = stringResource(R.string.profile_empty_following),
                     style = SeuType.Footnote,
                     color = colors.secondaryLabel,
                 )
@@ -510,11 +506,6 @@ private fun FollowedTopicsSection(profile: UserProfileStore) {
                         )
                         Text(topic.name, style = SeuType.Body, color = colors.label)
                         Spacer(Modifier.weight(1f))
-                        Text(
-                            text = forumCompactCount(topic.postCount),
-                            style = SeuType.Caption,
-                            color = colors.secondaryLabel,
-                        )
                         Spacer(Modifier.width(4.dp))
                         Icon(
                             imageVector = SeuIcons.of("checkmark"),
@@ -535,11 +526,11 @@ private fun RemindersSection(profile: UserProfileStore) {
     val colors = SeuTheme.colors
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(title = "我的提醒", actionLabel = null)
+        SectionHeader(title = stringResource(R.string.profile_section_reminders), actionLabel = null)
         if (profile.reminders.isEmpty()) {
             CardColumn {
                 Text(
-                    text = "暂无提醒，可在资讯详情页设定",
+                    text = stringResource(R.string.profile_empty_reminders),
                     style = SeuType.Footnote,
                     color = colors.secondaryLabel,
                 )
@@ -561,6 +552,7 @@ private fun RemindersSection(profile: UserProfileStore) {
 @Composable
 private fun ReminderRow(reminder: CampusReminder, onRemove: () -> Unit) {
     val colors = SeuTheme.colors
+    val context = LocalContext.current
     val days = reminder.daysRemaining
     Row(
         modifier = Modifier
@@ -592,7 +584,7 @@ private fun ReminderRow(reminder: CampusReminder, onRemove: () -> Unit) {
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = "${Format.date(reminder.dueDate)} 截止 · 提前 ${reminder.advanceDays} 天提醒",
+                text = stringResource(R.string.profile_reminder_row, Format.date(context, reminder.dueDate), reminder.advanceDays),
                 style = SeuType.Caption,
                 color = colors.secondaryLabel,
                 maxLines = 1,
@@ -601,7 +593,7 @@ private fun ReminderRow(reminder: CampusReminder, onRemove: () -> Unit) {
         }
         // `.foregroundStyle(daysRemaining <= 2 ? .red : .secondary)`
         Text(
-            text = if (days > 0) "剩 $days 天" else "今天",
+            text = if (days > 0) stringResource(R.string.profile_days_left, days) else stringResource(R.string.today),
             style = SeuType.CaptionMedium,
             color = if (days <= 2) colors.red else colors.secondaryLabel,
         )
@@ -632,7 +624,7 @@ private fun ResetRow(profile: UserProfileStore) {
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("恢复默认设置", style = SeuType.Body, color = colors.accent)
+            Text(stringResource(R.string.profile_reset_defaults), style = SeuType.Body, color = colors.accent)
         }
     }
 }
@@ -650,19 +642,19 @@ private fun ResetRow(profile: UserProfileStore) {
 private fun AboutSection() {
     val colors = SeuTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(title = "关于 SEU.wiki", actionLabel = null)
+        SectionHeader(title = stringResource(R.string.profile_section_about), actionLabel = null)
         CardColumn(spacing = 8.dp) {
             Text("SEU.wiki", style = SeuType.Title3, color = colors.label)
             Text(
-                text = "东南大学校园资讯与经验社区",
+                text = stringResource(R.string.profile_about_tagline),
                 style = SeuType.Footnote,
                 color = colors.secondaryLabel,
             )
-            AboutLine("版本", "0.1.0")
-            AboutLine("构建", "本地开发版")
-            AboutLine("生态", "IF.Link")
+            AboutLine(stringResource(R.string.profile_about_version_label), stringResource(R.string.profile_about_version))
+            AboutLine(stringResource(R.string.profile_about_build_label), stringResource(R.string.profile_about_build))
+            AboutLine(stringResource(R.string.profile_about_ecosystem_label), stringResource(R.string.profile_about_ecosystem))
             Text(
-                text = "登录服务由自部署 Logto（auth.iflink.tech）提供。",
+                text = stringResource(R.string.profile_about_logto),
                 style = SeuType.Footnote,
                 color = colors.secondaryLabel,
             )

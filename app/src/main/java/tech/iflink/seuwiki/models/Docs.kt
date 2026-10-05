@@ -1,5 +1,8 @@
 package tech.iflink.seuwiki.models
 
+import androidx.annotation.StringRes
+import tech.iflink.seuwiki.R
+
 /**
  * 生存手册 / 经验长文条目，对应 `GET /api/site/docs/survival` 与
  * `GET /api/site/docs/experience` 里的 `items[]`。
@@ -24,9 +27,9 @@ data class DocEntry(
 )
 
 /** 条目属于哪一套文档。[survival] 是生存手册，[experience] 是经验长文。 */
-enum class DocKind(val key: String, val label: String) {
-    Survival("survival", "生存手册"),
-    Experience("experience", "经验");
+enum class DocKind(val key: String, @StringRes val labelRes: Int) {
+    Survival("survival", R.string.doc_kind_survival),
+    Experience("experience", R.string.doc_kind_experience);
 
     companion object {
         fun fromKey(key: String?): DocKind? = entries.firstOrNull { it.key == key }
@@ -105,18 +108,18 @@ data class DocFilter(
  * `MockData.forumPosts` 的假帖子撑着的，而 seu-wiki-forum 至今没有任何
  * HTTP API 路由，社区功能接不通。现在四个子页全部来自真实文档接口。
  */
-enum class ExperienceTab(val key: String, val label: String) {
+enum class ExperienceTab(val key: String, @StringRes val labelRes: Int) {
     /** 经验长文列表。 */
-    Hot("hot", "热门"),
+    Hot("hot", R.string.experience_tab_hot),
 
     /** 经验长文的分面筛选（场景 / 年级 / 学院）。 */
-    Topics("topics", "话题"),
+    Topics("topics", R.string.experience_tab_topics),
 
     /** 东大生存手册文档树。 */
-    Handbook("handbook", "生存手册"),
+    Handbook("handbook", R.string.experience_tab_handbook),
 
     /** 社区关注 —— 尚未上线，界面给诚实空状态。 */
-    Following("following", "关注");
+    Following("following", R.string.experience_tab_following);
 
     companion object {
         val all: List<ExperienceTab> get() = entries.toList()

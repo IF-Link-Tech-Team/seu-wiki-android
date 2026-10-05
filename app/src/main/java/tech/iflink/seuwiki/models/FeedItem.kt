@@ -1,27 +1,33 @@
 package tech.iflink.seuwiki.models
 
+import androidx.annotation.StringRes
+import tech.iflink.seuwiki.R
+
 /**
  * Feed categories — the 8 `CATEGORIES` of seu-wiki-v2 `industry/taxonomy.ts`.
  *
- * [key] and [label] are taken from the contract. The contract ships no icon, so
- * [iconKey] is a client-side choice made to match the SF Symbol the iOS build
- * uses for the same category.
+ * [key] is taken from the contract and is the stable identifier: it goes into
+ * request params and route paths, so it must never be localized. The contract
+ * ships no icon, so [iconKey] is a client-side choice made to match the SF
+ * Symbol the iOS build uses for the same category.
  *
- * [label] is not named `name` because Kotlin's `Enum.name` is final.
+ * The display name lives in `strings.xml` as [labelRes] rather than a `String`
+ * field, so the compiler catches a missing/renamed resource at compile time
+ * instead of it silently rendering an empty chip.
  */
 enum class FeedCategory(
     val key: String,
-    val label: String,
+    @StringRes val labelRes: Int,
     val iconKey: String,
 ) {
-    Academic("academic", "教务", "building.columns"),
-    Aid("aid", "奖助", "gift"),
-    Competition("competition", "竞赛科研", "trophy"),
-    Exchange("exchange", "交流升学", "airplane"),
-    Career("career", "实习就业", "briefcase"),
-    Club("club", "社团活动", "person.3"),
-    Life("life", "生活服务", "fork.knife"),
-    News("news", "校园新闻", "newspaper");
+    Academic("academic", R.string.feed_category_academic, "building.columns"),
+    Aid("aid", R.string.feed_category_aid, "gift"),
+    Competition("competition", R.string.feed_category_competition, "trophy"),
+    Exchange("exchange", R.string.feed_category_exchange, "airplane"),
+    Career("career", R.string.feed_category_career, "briefcase"),
+    Club("club", R.string.feed_category_club, "person.3"),
+    Life("life", R.string.feed_category_life, "fork.knife"),
+    News("news", R.string.feed_category_news, "newspaper");
 
     companion object {
         fun fromKey(key: String?): FeedCategory? = entries.firstOrNull { it.key == key }

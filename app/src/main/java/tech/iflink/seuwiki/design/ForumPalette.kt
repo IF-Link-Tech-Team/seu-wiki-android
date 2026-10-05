@@ -1,8 +1,6 @@
 package tech.iflink.seuwiki.design
 
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
-import java.util.Locale
 
 /**
  * Deterministic colour assignment for forum topics, authors and handbook nodes.
@@ -12,22 +10,6 @@ import java.util.Locale
  * screens and relaunches — no state needed. This is the same scheme.
  */
 private fun bucketFor(key: String, buckets: Int): Int = key.sumOf { it.code } % buckets
-
-/**
- * Muted semantic palette used for author avatars and tag labels.
- *
- * Resolved from [SeuColorScheme] rather than hard-coded so these follow the
- * light/dark variants of the iOS system colors, exactly as `Color.blue` &
- * friends do in SwiftUI.
- */
-@Composable
-fun forumTint(key: String): Color {
-    val c = SeuTheme.colors
-    val palette = listOf(
-        c.blue, c.green, c.orange, c.pink, c.purple, c.teal, c.indigo, c.mint,
-    )
-    return palette[bucketFor(key, palette.size)]
-}
 
 /**
  * Fully saturated palette used for topic cards and handbook node icons — the
@@ -73,14 +55,3 @@ fun toolTintOf(key: String, colors: SeuColorScheme): Color = when (key) {
     "brown" -> IosPalette.Brown
     else -> IosPalette.Gray
 }
-
-/**
- * Compact count formatting shared by the forum screens: `1.9万` once a count
- * passes 10,000, a plain integer below that.
- */
-fun forumCompactCount(value: Int): String =
-    if (value >= 10_000) {
-        String.format(Locale.CHINA, "%.1f万", value / 10_000.0)
-    } else {
-        value.toString()
-    }

@@ -19,6 +19,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import kotlin.math.absoluteValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,6 +30,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.design.CardCornerRadius
 import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.IconWell
@@ -37,17 +40,12 @@ import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.design.TintPill
 import tech.iflink.seuwiki.design.cardStyle
-import tech.iflink.seuwiki.design.forumCompactCount
 import tech.iflink.seuwiki.design.forumSolidTint
-import tech.iflink.seuwiki.design.forumTint
 import tech.iflink.seuwiki.design.mixWith
 import tech.iflink.seuwiki.models.FeedItem
 import tech.iflink.seuwiki.models.DocEntry
 import tech.iflink.seuwiki.models.DocKind
-import tech.iflink.seuwiki.models.ForumPost
-import tech.iflink.seuwiki.models.ForumTopic
 import tech.iflink.seuwiki.models.HandbookSection
-import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.ui.Format
 
 /** Click affordance applied only when a handler is supplied. */
@@ -67,6 +65,7 @@ fun FeedRow(
     onClick: (() -> Unit)? = null,
 ) {
     val colors = SeuTheme.colors
+    val context = LocalContext.current
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -77,7 +76,7 @@ fun FeedRow(
         IconWell(tint = colors.accent) {
             Icon(
                 imageVector = SeuIcons.of(item.category.iconKey),
-                contentDescription = item.category.label,
+                contentDescription = stringResource(item.category.labelRes),
                 tint = colors.accent,
                 modifier = Modifier.size(17.dp),
             )
@@ -129,7 +128,7 @@ fun FeedRow(
                     }
                 }
                 Text(
-                    text = Format.relative(item.publishedAt),
+                    text = Format.relative(context, item.publishedAt),
                     style = SeuType.Caption,
                     color = colors.secondaryLabel,
                     maxLines = 1,
@@ -175,6 +174,7 @@ fun ForYouCard(
     onClick: (() -> Unit)? = null,
 ) {
     val colors = SeuTheme.colors
+    val context = LocalContext.current
     Column(
         modifier = modifier
             .cardStyle(onClick = onClick)
@@ -203,14 +203,14 @@ fun ForYouCard(
             )
             Text("·", style = SeuType.Caption, color = colors.secondaryLabel, maxLines = 1)
             Text(
-                text = Format.relative(item.publishedAt),
+                text = Format.relative(context, item.publishedAt),
                 style = SeuType.Caption,
                 color = colors.secondaryLabel,
                 maxLines = 1,
             )
             Spacer(Modifier.weight(1f))
             if (item.isSelected) {
-                StatLabel(symbol = "star.fill", text = "精选", tint = colors.orange)
+                StatLabel(symbol = "star.fill", text = stringResource(R.string.row_featured), tint = colors.orange)
             }
         }
 
@@ -251,6 +251,7 @@ fun FeedItemCard(
     onClick: (() -> Unit)? = null,
 ) {
     val colors = SeuTheme.colors
+    val context = LocalContext.current
     Row(
         modifier = modifier
             .cardStyle(padding = 14.dp, onClick = onClick)
@@ -287,13 +288,13 @@ fun FeedItemCard(
                 Text(item.sourceName, style = SeuType.Caption, color = colors.secondaryLabel)
                 Text("·", style = SeuType.Caption, color = colors.secondaryLabel)
                 Text(
-                    text = Format.relative(item.publishedAt),
+                    text = Format.relative(context, item.publishedAt),
                     style = SeuType.Caption,
                     color = colors.secondaryLabel,
                 )
                 if (item.isSelected) {
                     Text("·", style = SeuType.Caption, color = colors.secondaryLabel)
-                    StatLabel(symbol = "star.fill", text = "精选", tint = colors.orange)
+                    StatLabel(symbol = "star.fill", text = stringResource(R.string.row_featured), tint = colors.orange)
                 }
             }
         }
@@ -352,7 +353,7 @@ fun HandbookNodeCell(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = "${section.entries.size} 篇条目",
+                    text = stringResource(R.string.section_entry_count, section.entries.size),
                     style = SeuType.Caption,
                     color = colors.secondaryLabel,
                 )

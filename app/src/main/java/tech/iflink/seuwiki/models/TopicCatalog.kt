@@ -5,13 +5,22 @@ package tech.iflink.seuwiki.models
  *
  * The catalog has no HTTP endpoint, so it is mirrored here from
  * `src/lib/tags/catalog.mjs` (8 topics + 29 subtags, two levels).
+ *
+ * 这些话题名与子标签是**真实的目录内容**，不是界面文案，所以刻意不进
+ * `strings.xml`：翻译它们会破坏与后端 slug 的对应关系。
+ *
+ * 注意这里**没有** `postCount`。原来的实现给每个话题硬编码了 1284 / 862 / 743
+ * 这样的帖子数，而 seu-wiki-forum 至今没有任何 HTTP 路由，这些数字根本取不到
+ * 来源 —— 界面上却会把它们当真实数据展示给用户。iOS 侧从来没有显示过这个字段
+ * （它只存在于 `PreviewSample.swift` 样例数据里），只有 Android 的个人页
+ * 「关注的话题」把它渲染了出来。取不到真实数据就不显示，这比显示一个编造的
+ * 数字诚实。
  */
 data class ForumTopic(
     val slug: String,
     val name: String,
     val iconKey: String,
     val subtags: List<ForumSubtag>,
-    val postCount: Int = 0,
 )
 
 /** A second-level tag under a [ForumTopic]. */
@@ -20,46 +29,12 @@ data class ForumSubtag(
     val name: String,
 )
 
-/** A forum post, shaped from seu-forum's `PublicPostListItem`. */
-data class ForumPost(
-    val id: String,
-    val authorName: String,
-    val authorHeadline: String,
-    val title: String,
-    val excerpt: String,
-    val tags: List<String>,
-    val commentsCount: Int,
-    val likesCount: Int,
-    val viewsCount: Int = 0,
-    val createdAt: Long? = null,
-    val isFeatured: Boolean = false,
-    val images: List<ForumImage> = emptyList(),
-)
-
-/** An attached post image. [url] may be absolute or `/api/media/...` relative. */
-data class ForumImage(
-    val id: String,
-    val url: String,
-)
-
-/** The four Experience sub-pages, in console order. */
-enum class ForumFeedTab(val label: String) {
-    Hot("热门"),
-    Following("关注"),
-    Topics("话题"),
-    Handbook("生存手册");
-
-    companion object {
-        val all: List<ForumFeedTab> get() = entries.toList()
-    }
-}
-
 /** The full study tag catalog, mirroring seu-forum's `catalog.mjs`. */
 object TopicCatalog {
 
     val topics: List<ForumTopic> = listOf(
         ForumTopic(
-            slug = "baoyan", name = "保研", iconKey = "graduationcap", postCount = 1284,
+            slug = "baoyan", name = "保研", iconKey = "graduationcap",
             subtags = listOf(
                 ForumSubtag("baoyan-jingyan", "经验分享"),
                 ForumSubtag("baoyan-xialingying", "夏令营"),
@@ -69,7 +44,7 @@ object TopicCatalog {
             ),
         ),
         ForumTopic(
-            slug = "kaoyan", name = "考研", iconKey = "book", postCount = 862,
+            slug = "kaoyan", name = "考研", iconKey = "book",
             subtags = listOf(
                 ForumSubtag("kaoyan-zexiao", "择校择专业"),
                 ForumSubtag("kaoyan-chushi", "初试经验"),
@@ -78,7 +53,7 @@ object TopicCatalog {
             ),
         ),
         ForumTopic(
-            slug = "liuxue", name = "留学", iconKey = "airplane", postCount = 743,
+            slug = "liuxue", name = "留学", iconKey = "airplane",
             subtags = listOf(
                 ForumSubtag("liuxue-dingwei", "申请定位"),
                 ForumSubtag("liuxue-yuyan", "语言考试"),
@@ -87,7 +62,7 @@ object TopicCatalog {
             ),
         ),
         ForumTopic(
-            slug = "srtp", name = "科研与 SRTP", iconKey = "flask", postCount = 519,
+            slug = "srtp", name = "科研与 SRTP", iconKey = "flask",
             subtags = listOf(
                 ForumSubtag("srtp-shenqing", "项目申请"),
                 ForumSubtag("srtp-jinzu", "进组经验"),
@@ -96,7 +71,7 @@ object TopicCatalog {
             ),
         ),
         ForumTopic(
-            slug = "jingsai", name = "学科竞赛", iconKey = "trophy", postCount = 456,
+            slug = "jingsai", name = "学科竞赛", iconKey = "trophy",
             subtags = listOf(
                 ForumSubtag("jingsai-shumo", "数学建模"),
                 ForumSubtag("jingsai-dianzi", "电子设计"),
@@ -105,14 +80,14 @@ object TopicCatalog {
             ),
         ),
         ForumTopic(
-            slug = "zhuanye", name = "转专业", iconKey = "arrow.triangle.branch", postCount = 187,
+            slug = "zhuanye", name = "转专业", iconKey = "arrow.triangle.branch",
             subtags = listOf(
                 ForumSubtag("zhuanye-zhengce", "政策解读"),
                 ForumSubtag("zhuanye-kaohe", "考核经验"),
             ),
         ),
         ForumTopic(
-            slug = "shixi", name = "实习就业", iconKey = "briefcase", postCount = 934,
+            slug = "shixi", name = "实习就业", iconKey = "briefcase",
             subtags = listOf(
                 ForumSubtag("shixi-neitui", "实习内推"),
                 ForumSubtag("shixi-qiuzhao", "秋招春招"),
@@ -120,7 +95,7 @@ object TopicCatalog {
             ),
         ),
         ForumTopic(
-            slug = "shenghuo", name = "校园生活", iconKey = "leaf", postCount = 1120,
+            slug = "shenghuo", name = "校园生活", iconKey = "leaf",
             subtags = listOf(
                 ForumSubtag("shenghuo-shitang", "食堂测评"),
                 ForumSubtag("shenghuo-sushe", "宿舍"),
@@ -128,8 +103,6 @@ object TopicCatalog {
             ),
         ),
     )
-
-    val subtagCount: Int get() = topics.sumOf { it.subtags.size }
 
     fun topic(slug: String): ForumTopic? = topics.firstOrNull { it.slug == slug }
 
