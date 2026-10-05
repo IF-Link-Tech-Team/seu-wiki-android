@@ -2,6 +2,7 @@ package tech.iflink.seuwiki.data
 
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -29,6 +30,8 @@ import kotlinx.serialization.json.jsonPrimitive
  * 完全对齐 iOS 的 `AuthConfig`，后端契约见 `seu-wiki-forum/docs/auth.md` §2：
  *
  * - 授权码 + PKCE（S256），public client 无 secret；
+ * - 要 refresh token 就必须补 `prompt=consent`，否则 Logto 按 OIDC Core §6 丢弃
+ *   `offline_access`，详见 [offlineAccessGranted]；
  * - 必须请求 `openid profile email roles`，否则 UserInfo 缺声明、角色映射静默降级；
  * - 之后的后端请求一律带 `Authorization: Bearer <access_token>`，该头是权威凭证，
  *   token 无效只会得到匿名/401，绝不回退 Cookie 会话。
@@ -80,6 +83,28 @@ class AuthStore private constructor(
     // MARK: - Public API
 
     /**
+     * 是否已经向 Logto 取得过「离线访问」授权（即拿到过 refresh token）。
+     *
+     * OIDC Core §6 规定：请求里带 `offline_access` 时 `prompt` 必须同时带 `consent`，
+     * 否则授权服务器**必须忽略** `offline_access`。Logto 严格执行这条 —— 早期只发了
+     * `offline_access` 而漏了 `prompt=consent`，token 响应里就**没有 `refresh_token`**，
+     * 而 `email` / `roles` 一切正常，极难察觉。后果是 access token 一小时后过期，
+     * [accessToken] 拿不到 refresh token 只能 [logout]，表现为「用着用着被静默登出」。
+     *
+     * 首次登录补上 `prompt=consent`，Logto 弹一次授权页并把 `offline_access` 记进
+     * 该用户对本应用的 grant；之后按 OIDC Core 的「其他已满足条件」直接复用该 grant，
+     * 不必每次登录都弹授权页。故此标志只置位、登出时也保留，
+     * 仅在续期被拒（grant 可能已在服务端失效）时清掉，让下一次登录重新征求同意。
+     *
+     * 这条不只是为了「能续期」：Logto 文档写明，若授权请求里没有 `offline_access`，
+     * 签发出的 refresh token 会被绑定到 user session（固定 14 天 TTL），
+     * session 一过期 token 就作废，控制台的 refresh token TTL 设置形同虚设。
+     */
+    private var offlineAccessGranted: Boolean
+        get() = prefs.getBoolean(KEY_OFFLINE_GRANTED, false)
+        set(value) = prefs.edit().putBoolean(KEY_OFFLINE_GRANTED, value).apply()
+
+    /**
      * 拼出授权 URL 并返回需要保留的 PKCE verifier / state。
      *
      * 拆成「拼 URL」与「处理回调」两步，是为了让打开浏览器这一步留在 UI 层
@@ -102,6 +127,8 @@ class AuthStore private constructor(
             append("&state=").append(enc(state))
             append("&code_challenge=").append(enc(challenge))
             append("&code_challenge_method=S256")
+            // 只在还没拿到过离线授权时补 prompt=consent，见 [offlineAccessGranted]。
+            if (!offlineAccessGranted) append("&prompt=consent")
             // resource 让 Logto 签发面向本 API 的 JWT；opaque token 也能用，故可空。
             config.resource?.let { append("&resource=").append(enc(it)) }
         }
@@ -141,6 +168,8 @@ class AuthStore private constructor(
             clearPending()
 
             val token = exchangeCode(code, pending.verifier)
+            // 拿到 refresh token 即说明 Logto 认可了 offline_access，之后不必再弹授权页。
+            if (token.refreshToken != null) offlineAccessGranted = true
             val userInfo = fetchUserInfo(token.accessToken)
             val newSession = Session(
                 accessToken = token.accessToken,
@@ -189,7 +218,9 @@ class AuthStore private constructor(
             val token = TokenResponse.from(json.parseToJsonElement(body).jsonObject)
             val renewed = current.copy(
                 accessToken = token.accessToken,
-                // Logto 可能在刷新时轮换 refresh token，缺省则沿用旧的。
+                // Logto 文档：public client（Native/SPA）开启 Rotate refresh token 后，
+                // 每次用 refresh token 换 access token 一定会签发新的 refresh token，
+                // 所以这里 `?: refresh` 只是兜底，不是常态。
                 refreshToken = token.refreshToken ?: refresh,
                 expiresAt = System.currentTimeMillis() + token.expiresInMillis,
             )
@@ -198,6 +229,9 @@ class AuthStore private constructor(
             renewed.accessToken
         } catch (_: Exception) {
             logout()
+            // grant 可能已在服务端失效（超过 14 天 TTL、密码重置、管理员清理授权）：
+            // 连同「已授权」标志一起清掉，下一次登录会重新弹授权页并取回 refresh token。
+            offlineAccessGranted = false
             null
         }
     }
@@ -207,9 +241,14 @@ class AuthStore private constructor(
         lastError = null
     }
 
-    /** 本地登出：清 token 与资料。 */
+    /**
+     * 本地登出：清 token 与资料。
+     *
+     * 保留 [KEY_OFFLINE_GRANTED]：consent 是「用户对本应用的一次性许可」，
+     * 登出不代表收回它 —— 否则每次重新登录都要再看一遍授权页。
+     */
     fun logout() {
-        prefs.edit().clear().apply()
+        clearSession()
         session = null
         lastError = null
     }
@@ -230,8 +269,15 @@ class AuthStore private constructor(
             fun from(obj: JsonObject): TokenResponse {
                 val access = obj["access_token"]?.jsonPrimitive?.content
                     ?: error("token 响应缺少 access_token")
-                val refresh = obj["refresh_token"]?.jsonPrimitive?.content
+                // 同样要排除 JSON null：否则会存下字符串 "null" 当 refresh token。
+                val refresh = obj["refresh_token"]?.takeIf { it !is JsonNull }
+                    ?.jsonPrimitive?.contentOrNull
                 val expiresIn = obj["expires_in"]?.jsonPrimitive?.content?.toLongOrNull() ?: 3600L
+                // 只记字段名和「有没有 refresh_token」，绝不打印任何 token 值。
+                Log.i(
+                    "AuthStore",
+                    "token 响应字段=${obj.keys}，含 refresh_token=${refresh != null}",
+                )
                 return TokenResponse(access, refresh, expiresIn * 1000L)
             }
         }
@@ -282,6 +328,19 @@ class AuthStore private constructor(
 
     private fun resourceParam(): Map<String, String> =
         config.resource?.let { mapOf("resource" to it) } ?: emptyMap()
+
+    /** 清空会话与在途 PKCE 材料，但保留 [KEY_OFFLINE_GRANTED]。 */
+    private fun clearSession() = prefs.edit()
+        .remove(KEY_ACCESS)
+        .remove(KEY_REFRESH)
+        .remove(KEY_EXPIRES)
+        .remove(KEY_SUB)
+        .remove(KEY_NAME)
+        .remove(KEY_EMAIL)
+        .remove(KEY_AVATAR)
+        .remove(KEY_VERIFIER)
+        .remove(KEY_STATE)
+        .apply()
 
     private fun persist(s: Session) {
         prefs.edit()
@@ -376,6 +435,9 @@ class AuthStore private constructor(
         private const val KEY_AVATAR = "avatar_url"
         private const val KEY_VERIFIER = "pkce_verifier"
         private const val KEY_STATE = "pkce_state"
+
+        /** 是否已取得 offline_access 授权（拿到过 refresh token），见 [offlineAccessGranted]。 */
+        private const val KEY_OFFLINE_GRANTED = "offline_access_granted"
     }
 }
 
