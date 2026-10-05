@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- iOS systemGroupedBackground light value (#F2F2F7). -->
+    <color name="grouped_background">#FFF2F2F7</color>
+    <!-- SEU accent light value, from the iOS AccentColor asset. -->
+    <color name="seu_accent">#FF0E5A46</color>
+</resources>
