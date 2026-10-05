@@ -23,8 +23,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -34,6 +36,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.launch
+import androidx.compose.animation.core.Animatable
+import androidx.compose.runtime.remember
+import kotlin.math.roundToInt
 
 /**
  * The iOS `cardStyle()` modifier: a raised card on the grouped background.
@@ -244,9 +259,144 @@ fun TintPill(
     )
 }
 
+/**
+ * 左滑露出删除按钮的列表行容器。
+ *
+ * 国内 App 的通用手势（UI/UX 方案 §5「列表删除：左滑删除 + 长按菜单」）。
+ * **滑到头不直接删**，而是把删除按钮露出来并弹确认 —— 拇指在屏幕上
+ * 一路划过去就到了列表深处，误触率远高于点一个按钮，直接删等于把
+ * 「误触」和「删除」画上等号。
+ *
+ * @param onLongClick 长按等价于点删除按钮，给不方便精确滑动的人留一条路。
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun SwipeToDeleteBox(
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    content: @Composable () -> Unit,
+) {
+    val colors = SeuTheme.colors
+    val offsetX = remember { Animatable(0f) }
+    val scope = rememberCoroutineScope()
+    val revealWidth = 88.dp
+    val maxRevealPx = with(LocalDensity.current) { revealWidth.toPx() }
+
+    Box(modifier = modifier.fillMaxWidth()) {
+        // 底层的删除区：始终铺在行后面，滑多远都不消失，所以用户能看见
+        // 「往左滑会发生什么」。
+        //
+        // **它必须自己可点**：内容层被 `offset` 移开后不再覆盖右侧这一段，
+        // 手指点在这里会穿透到本层 —— 不挂 `clickable` 的话删除键就永远按不动。
+        Row(
+            modifier = Modifier
+                .matchParentSize()
+                .background(colors.red)
+                .clickable(onClick = onDelete)
+                .padding(end = 20.dp),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = SeuIcons.of("trash"),
+                contentDescription = null,
+                tint = Color.White,
+                modifier = Modifier.size(22.dp),
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(offsetX.value.roundToInt(), 0) }
+                // 内容层必须自己刷一层不透明底色：外层 `CardColumn` 的白底在
+                // 这个 Box **之外**，行一滑开红色就会从下面整片透上来，
+                // 看起来像「整行被标红」而不是「右侧露出删除区」。
+                .background(colors.secondaryGroupedBackground)
+                .combinedClickable(
+                    onClick = {},
+                    onLongClick = onLongClick,
+                )
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            // 滑过一半就吸附到「露出删除键」，否则弹回原位。
+                            scope.launch {
+                                offsetX.animateTo(
+                                    if (offsetX.value < -maxRevealPx / 2f) -maxRevealPx else 0f,
+                                )
+                            }
+                        },
+                        onHorizontalDrag = { _, dragAmount ->
+                            scope.launch {
+                                // 只允许往左滑：右滑不越过 0，避免把行推出屏幕。
+                                val next = (offsetX.value + dragAmount).coerceIn(-maxRevealPx, 0f)
+                                offsetX.snapTo(next)
+                            }
+                        },
+                    )
+                },
+        ) {
+            content()
+        }
+    }
+}
+
 /** Spacer helper matching SwiftUI's `Spacer(minLength:)`. */
 @Composable
 fun VSpace(height: Dp) = Spacer(Modifier.height(height))
 
 @Composable
 fun HSpace(width: Dp) = Spacer(Modifier.width(width))
+
+/**
+ * 危险操作的二次确认。
+ *
+ * 早先「退出登录」「恢复默认设置」都是**一点即执行**：
+ * 前者会连带向 Logto 发 RFC 7009 吊销、服务端 refresh token 立即作废
+ * （误触一次就得重新走一遍浏览器授权），后者会把画像、课表和用户一条条
+ * 攒出来的提醒一起清掉。两处都撤不回来，却长得像普通设置行 ——
+ * UI/UX 方案 §5 把这一类列为「③ 必做」。
+ *
+ * 用系统 [AlertDialog] 而不是自绘遮罩：它自带返回键处理、点击外部关闭与
+ * 正确的焦点顺序，这几件正是自绘时最容易漏的。
+ *
+ * @param destructive 确认按钮用危险色，且默认落在「取消」上 —— 破坏性操作
+ *   不该让"回车"直接执行。
+ */
+@Composable
+fun ConfirmDialog(
+    title: String,
+    message: String,
+    confirmLabel: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    destructive: Boolean = false,
+) {
+    val colors = SeuTheme.colors
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title, style = SeuType.Headline, color = colors.label) },
+        text = { Text(message, style = SeuType.Body, color = colors.secondaryLabel) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text(
+                    text = confirmLabel,
+                    style = SeuType.SubheadlineMedium,
+                    color = if (destructive) colors.red else colors.accent,
+                )
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = stringResource(R.string.action_cancel),
+                    style = SeuType.SubheadlineMedium,
+                    color = colors.secondaryLabel,
+                )
+            }
+        },
+        containerColor = colors.secondaryGroupedBackground,
+    )
+}
+

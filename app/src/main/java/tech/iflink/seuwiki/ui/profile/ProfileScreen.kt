@@ -26,9 +26,10 @@ import androidx.compose.material3.Text
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -42,11 +43,13 @@ import tech.iflink.seuwiki.data.AuthStore
 import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.CardColumn
+import tech.iflink.seuwiki.design.ConfirmDialog
 import tech.iflink.seuwiki.design.CardCornerRadius
 import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.IconWell
 import tech.iflink.seuwiki.design.InsetDivider
 import tech.iflink.seuwiki.design.SectionHeader
+import tech.iflink.seuwiki.design.SwipeToDeleteBox
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
@@ -280,16 +283,36 @@ private fun LoginRow(auth: AuthStore) {
     }
 }
 
-/** 已登录时的退出入口，对应 iOS 的 destructive「退出登录」。 */
+/**
+ * 已登录时的退出入口，对应 iOS 的 destructive「退出登录」。
+ *
+ * **必须二次确认。** `auth.logout()` 会连带向 Logto 发 RFC 7009 吊销请求，
+ * 服务端的 refresh token 随即作废 —— 误触一次不是"退了个登录"，而是
+ * 真的要重新走一遍浏览器授权才能回来（UI/UX 方案 §5「确认对话框：必做」）。
+ */
 @Composable
 private fun LogoutRow(auth: AuthStore) {
     val colors = SeuTheme.colors
+    var confirms by remember { mutableStateOf(false) }
+    if (confirms) {
+        ConfirmDialog(
+            title = stringResource(R.string.sign_out_confirm_title),
+            message = stringResource(R.string.sign_out_confirm_message),
+            confirmLabel = stringResource(R.string.profile_sign_out),
+            destructive = true,
+            onConfirm = {
+                confirms = false
+                auth.logout()
+            },
+            onDismiss = { confirms = false },
+        )
+    }
     CardColumn(spacing = 0.dp) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(ContinuousRoundedShape(CardCornerRadius))
-                .clickable { auth.logout() }
+                .clickable { confirms = true }
                 .padding(vertical = 15.dp),
             horizontalArrangement = Arrangement.Center,
         ) {
@@ -524,6 +547,7 @@ private fun FollowedTopicsSection(profile: UserProfileStore) {
 @Composable
 private fun RemindersSection(profile: UserProfileStore) {
     val colors = SeuTheme.colors
+    var pendingRemoval by remember { mutableStateOf<CampusReminder?>(null) }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         SectionHeader(title = stringResource(R.string.profile_section_reminders), actionLabel = null)
@@ -539,18 +563,40 @@ private fun RemindersSection(profile: UserProfileStore) {
             CardColumn(padding = 0.dp) {
                 profile.reminders.forEachIndexed { index, reminder ->
                     if (index > 0) InsetDivider()
-                    ReminderRow(
-                        reminder = reminder,
-                        onRemove = { profile.removeReminder(reminder.id) },
-                    )
+                    // 左滑删除 + 长按菜单两种入口（UI/UX 方案 §5「列表删除」）。
+                    // 原来只有右侧那个 × ：它虽然已经垫到 48dp 触控区，但长得
+                    // 像"更多"而不是"删除"，且位置随标题长度漂移，用户很难
+                    // 第一眼在列表里找到。
+                    SwipeToDeleteBox(
+                        onDelete = { pendingRemoval = reminder },
+                        onLongClick = { pendingRemoval = reminder },
+                    ) {
+                        ReminderRow(reminder = reminder)
+                    }
                 }
             }
         }
     }
+
+    // 三条删除入口（×、左滑、长按）都走这一个确认弹层。删除提醒撤不回来
+    // —— 排好的系统通知也会一起撤掉，用户得从头再设一次。
+    pendingRemoval?.let { reminder ->
+        ConfirmDialog(
+            title = stringResource(R.string.reminder_delete_confirm_title),
+            message = stringResource(R.string.reminder_delete_confirm_message),
+            confirmLabel = stringResource(R.string.reminder_delete),
+            destructive = true,
+            onConfirm = {
+                profile.removeReminder(reminder.id)
+                pendingRemoval = null
+            },
+            onDismiss = { pendingRemoval = null },
+        )
+    }
 }
 
 @Composable
-private fun ReminderRow(reminder: CampusReminder, onRemove: () -> Unit) {
+private fun ReminderRow(reminder: CampusReminder) {
     val colors = SeuTheme.colors
     val context = LocalContext.current
     val days = reminder.daysRemaining
@@ -597,30 +643,37 @@ private fun ReminderRow(reminder: CampusReminder, onRemove: () -> Unit) {
             style = SeuType.CaptionMedium,
             color = if (days <= 2) colors.red else colors.secondaryLabel,
         )
-        Spacer(Modifier.width(4.dp))
-        Icon(
-            imageVector = SeuIcons.of("xmark"),
-            contentDescription = stringResource(R.string.reminder_delete),
-            tint = colors.tertiaryLabel,
-            modifier = Modifier
-                // 48dp 触控目标：图标本身 24dp + padding 4dp 只有 32dp，低于无障碍下限，
-                // 手指很难点准，而且这还是「删除」这种不可逆操作。
-                .size(48.dp)
-                .clip(ContinuousRoundedShape(24.dp))
-                .clickable(onClick = onRemove),
-        )
     }
 }
 
-/** 恢复默认设置 — clears the local store back to its shipped defaults. */
+/**
+ * 恢复默认设置 — clears the local store back to its shipped defaults.
+ *
+ * 同样要二次确认：这一下会把学院、学段、年级、兴趣标签、课表**和已设的提醒**
+ * 一起清掉，其中提醒是用户一条条攒出来的，清掉后没有任何地方找得回来。
+ */
 @Composable
 private fun ResetRow(profile: UserProfileStore) {
     val colors = SeuTheme.colors
+    var confirms by remember { mutableStateOf(false) }
+    if (confirms) {
+        ConfirmDialog(
+            title = stringResource(R.string.reset_confirm_title),
+            message = stringResource(R.string.reset_confirm_message),
+            confirmLabel = stringResource(R.string.action_confirm),
+            destructive = false,
+            onConfirm = {
+                confirms = false
+                profile.resetToDefaults()
+            },
+            onDismiss = { confirms = false },
+        )
+    }
     CardColumn(padding = 0.dp) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { profile.resetToDefaults() }
+                .clickable { confirms = true }
                 .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

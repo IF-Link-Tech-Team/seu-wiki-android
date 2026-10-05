@@ -401,4 +401,15 @@
     <string name="reminder_schedule_past">这个时间点已经过去，没有排上提醒</string>
     <string name="reminder_deleted">已删除提醒</string>
     <string name="reminder_delete">删除提醒</string>
+    <string name="reminder_delete_confirm_title">删除这条提醒？</string>
+    <string name="reminder_delete_confirm_message">删除后到点不会再提醒你，这个操作撤不回来。</string>
+    <string name="reminder_undo">撤销</string>
+
+    <!-- 危险操作二次确认（UI/UX 方案 §5「确认对话框：③ 必做」） -->
+    <string name="action_confirm">确定</string>
+    <string name="action_cancel">取消</string>
+    <string name="sign_out_confirm_title">退出登录？</string>
+    <string name="sign_out_confirm_message">退出会吊销本机的登录凭证，需要重新走一次浏览器授权才能再登录。</string>
+    <string name="reset_confirm_title">恢复默认设置？</string>
+    <string name="reset_confirm_message">学院、学段、年级、兴趣标签、课表和已设的提醒都会清空，这一项撤不回来。</string>
 </resources>
