@@ -303,19 +303,30 @@ fun DetailHeader(
         ) {
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    // 视觉圆盘仍是 36dp，但**可点区域**撑到 48dp：直接把圆盘放大
+                    // 会让 44dp 高的标题栏装不下，改为外层 48dp 透明盒子包住内层圆盘。
+                    // §3.5 点名的「返回 36dp」就是这个 —— 圆盘看着够大，手指却
+                    // 不容易点准，而它是整个 App 里最高频的一个按钮。
+                    .size(48.dp)
                     .clip(CircleShape)
-                    .background(colors.secondaryGroupedBackground)
-                    .border(1.dp, colors.label.copy(alpha = 0.12f), CircleShape)
                     .clickable(onClick = onBack),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(
-                    imageVector = SeuIcons.of("chevron.left"),
-                    contentDescription = stringResource(R.string.cd_back),
-                    tint = colors.label,
-                    modifier = Modifier.size(17.dp),
-                )
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(CircleShape)
+                        .background(colors.secondaryGroupedBackground)
+                        .border(1.dp, colors.label.copy(alpha = 0.12f), CircleShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = SeuIcons.of("chevron.left"),
+                        contentDescription = stringResource(R.string.cd_back),
+                        tint = colors.label,
+                        modifier = Modifier.size(17.dp),
+                    )
+                }
             }
             if (trailing != null) {
                 Box(Modifier.weight(1f))
