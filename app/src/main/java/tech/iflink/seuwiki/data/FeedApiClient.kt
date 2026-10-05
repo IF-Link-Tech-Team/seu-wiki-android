@@ -2,6 +2,9 @@ package tech.iflink.seuwiki.data
 
 import kotlinx.serialization.Serializable
 import tech.iflink.seuwiki.models.CampusAudience
+import tech.iflink.seuwiki.models.DocAnchor
+import tech.iflink.seuwiki.models.DocKind
+import tech.iflink.seuwiki.models.DocRef
 import tech.iflink.seuwiki.models.FeedCategory
 import tech.iflink.seuwiki.models.FeedItem
 import tech.iflink.seuwiki.models.ValueTier
@@ -10,7 +13,9 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
 /**
@@ -87,14 +92,43 @@ class FeedApiClient(
         )
     }
 
-    /** GET /api/site/pool?q=&page= —— 全站搜索，固定每页 40 条。 */
-    suspend fun pool(query: String, page: Int = 1): PoolPage {
+    /**
+     * `GET /api/site/pool?q=&type=all&page=&limit=` —— 全站统一搜索。
+     *
+     * 一次请求同时返回两类信源：`items` 是资讯卡，`docs` 是手册 / 经验条目。
+     * 搜索页的「三信源」就是拿这两组做映射（见 [DocsStore]），不再额外发第二次请求。
+     *
+     * [type] 可取 `all` / `feed` / `survival` / `experience`，用来只查某一类信源。
+     * [limit] 服务端上限 40，超出会被截断，这里先夹住。
+     */
+    suspend fun pool(
+        query: String,
+        type: String = "all",
+        page: Int = 1,
+        limit: Int = 40,
+    ): PoolPage {
         val dto: PoolResponse = get(
             "/api/site/pool",
-            listOf("q" to query, "page" to page.toString()),
+            buildList {
+                add("q" to query)
+                add("type" to type)
+                add("page" to page.toString())
+                add("limit" to limit.coerceIn(1, 40).toString())
+            },
         )
         return PoolPage(
             items = dto.items.map { it.toFeedItem() },
+            docs = dto.docs.mapNotNull { d ->
+                val kind = DocKind.fromKey(d.kind) ?: return@mapNotNull null
+                DocRef(
+                    slug = d.slug,
+                    kind = kind,
+                    title = d.title,
+                    description = d.description?.takeIf { it.isNotBlank() },
+                    occurredAt = parseIso8601(d.occurredAt),
+                    anchor = d.anchor?.let { DocAnchor(it.id, it.text) },
+                )
+            },
             page = dto.page,
             pageCount = dto.pageCount,
             total = dto.total,
@@ -150,6 +184,8 @@ data class FeedPage(val items: List<FeedItem>, val nextCursor: String?)
 /** pool 响应是按页翻的，不是 cursor。 */
 data class PoolPage(
     val items: List<FeedItem>,
+    /** 手册 / 经验条目，用 [DocRef.kind] 区分；搜索页据此拆成「经验」「手册」两个信源。 */
+    val docs: List<DocRef> = emptyList(),
     val page: Int,
     val pageCount: Int,
     val total: Int,
@@ -220,9 +256,27 @@ private data class ForYouResponse(
 @Serializable
 private data class PoolResponse(
     val items: List<FeedItemSummaryDto> = emptyList(),
+    /** 手册 / 经验条目。契约里有、但早期实现漏了这个字段，导致搜索只有资讯一个信源。 */
+    val docs: List<PoolDocDto> = emptyList(),
     val page: Int = 1,
     val pageCount: Int = 1,
     val total: Int = 0,
+)
+
+@Serializable
+private data class PoolDocDto(
+    val slug: String = "",
+    val kind: String = "",
+    val title: String = "",
+    val description: String? = null,
+    val occurredAt: String? = null,
+    val anchor: PoolDocAnchorDto? = null,
+)
+
+@Serializable
+private data class PoolDocAnchorDto(
+    val id: String = "",
+    val text: String = "",
 )
 
 @Serializable
@@ -273,13 +327,28 @@ private fun FeedItemSummaryDto.toFeedItem(): FeedItem {
 }
 
 /**
- * `Instant.parse` 覆盖线上实测的带毫秒 ISO8601（`2026-10-04T04:47:20.333Z`），
- * 也兼容不带毫秒的形式；解析不了就返回 null 而不是抛异常，让调用方走回退。
+ * 宽松解析服务端的时间字段，任何一种格式解析不了都返回 null 而不是抛异常。
+ *
+ * 服务端下发的 `occurredAt` / `publishedAt` / `campus.deadline` 实际有三种形态：
+ * 1. 带时区的 ISO-8601：`2026-10-04T04:47:20.333Z`、`2025-09-30T08:00:00+08:00`；
+ * 2. 不带时区的本地时间：`2025-09-30T08:00:00`；
+ * 3. **只有日期**：`2025-09-30`。
+ *
+ * 第 3 种是 `deadline` 的常态（实测多条通知的截止时间都只有年月日）。
+ * `Instant.parse` 和 `LocalDateTime.parse` 对它**都会抛
+ * `DateTimeParseException`**，于是原来的实现里截止时间被整个丢掉 ——
+ * 界面上「10 月 12 日截止」那条横幅从来没出现过。补上 `LocalDate` 分支。
+ *
+ * 只有日期时按 **UTC 零点**解释：这是唯一一个不需要猜时区的选择。
  */
 internal fun parseIso8601(value: String?): Long? {
     if (value.isNullOrBlank()) return null
     return runCatching { Instant.parse(value).toEpochMilli() }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrNull()
         ?: runCatching {
             LocalDateTime.parse(value).toInstant(ZoneOffset.UTC).toEpochMilli()
+        }.getOrNull()
+        ?: runCatching {
+            LocalDate.parse(value).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
         }.getOrNull()
 }
