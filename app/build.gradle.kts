@@ -120,6 +120,15 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coil.compose)
 
+    // 自检套件：与 iOS 的 SelfCheck.swift 对齐的关键纯逻辑断言。
+    // Robolectric 是必需的——Format/CampusHtml/Routes 都碰 Compose 与
+    // android.net.Uri，普通 JVM 单测会直接抛「not mocked」。
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui)
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
 /**

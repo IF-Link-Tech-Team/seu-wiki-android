@@ -1,4 +1,6 @@
 [versions]
+junit = "4.13.2"
+robolectric = "4.14.1"
 agp = "8.7.3"
 kotlin = "2.0.21"
 coreKtx = "1.13.1"
@@ -31,6 +33,9 @@ androidx-browser = { group = "androidx.browser", name = "browser", version.ref =
 androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "security" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "serialization" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
