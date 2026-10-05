@@ -57,13 +57,14 @@ import tech.iflink.seuwiki.ui.rows.toolGradientColors
 @Composable
 fun ToolsScreen(
     profile: UserProfileStore,
+    onOpenProfile: () -> Unit,
     onOpenTool: (String) -> Unit,
 ) {
     val tools = remember { MockData.tools }
 
     TabPage {
         Column {
-            ScreenHeader(title = "工具")
+            ScreenHeader(title = "工具", onProfileClick = onOpenProfile)
             LazyVerticalGrid(
                 columns = GridCells.Fixed(2),
                 modifier = Modifier.fillMaxWidth(),

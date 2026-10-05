@@ -67,6 +67,7 @@ import tech.iflink.seuwiki.ui.rows.TopicCard
 @Composable
 fun ExperienceScreen(
     profile: UserProfileStore,
+    onOpenProfile: () -> Unit,
     onOpenPost: (String) -> Unit,
     onOpenTopic: (String) -> Unit,
     onOpenHandbookSection: (String) -> Unit,
@@ -91,7 +92,7 @@ fun ExperienceScreen(
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            ScreenHeader(title = "经验")
+            ScreenHeader(title = "经验", onProfileClick = onOpenProfile)
             ConsoleBar(
                 items = tabs,
                 selection = tab,

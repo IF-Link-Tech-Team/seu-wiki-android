@@ -407,7 +407,13 @@ fun GPACalculatorScreen(onBack: () -> Unit) {
             DetailHeader(title = "绩点计算", onBack = onBack)
 
             if (courses.isEmpty()) {
-                Column(Modifier.fillMaxWidth().weight(1f)) {
+                // The SwiftUI empty state puts the action inside the
+                // `ContentUnavailableView` actions block, so the button shares
+                // the centred stack rather than sitting at the leading edge.
+                Column(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
                     EmptyStateView(
                         title = "还没有课程",
                         description = "添加课程的成绩与学分，自动按五分制换算绩点",

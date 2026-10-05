@@ -111,6 +111,7 @@ class SearchResults(
  */
 @Composable
 fun SearchScreen(
+    onOpenProfile: () -> Unit,
     onOpenFeed: (String) -> Unit,
     onOpenPost: (String) -> Unit,
     onOpenHandbookEntry: (String) -> Unit,
@@ -125,7 +126,7 @@ fun SearchScreen(
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            ScreenHeader(title = "搜索")
+            ScreenHeader(title = "搜索", onProfileClick = onOpenProfile)
             SearchField(
                 keyword = keyword,
                 onKeywordChange = { keyword = it },

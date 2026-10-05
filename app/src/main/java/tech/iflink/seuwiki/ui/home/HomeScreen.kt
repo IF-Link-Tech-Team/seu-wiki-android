@@ -59,6 +59,7 @@ import tech.iflink.seuwiki.ui.rows.ForumRow
 @Composable
 fun HomeScreen(
     profile: UserProfileStore,
+    onOpenProfile: () -> Unit,
     onOpenFeedList: () -> Unit,
     onOpenForumList: () -> Unit,
     onOpenFeed: (String) -> Unit,
@@ -71,7 +72,7 @@ fun HomeScreen(
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            ScreenHeader(title = "主页")
+            ScreenHeader(title = "主页", onProfileClick = onOpenProfile)
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(

@@ -139,6 +139,7 @@ fun RootView() {
             composable(AppTab.Home.route) {
                 HomeScreen(
                     profile = profile,
+                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenFeedList = { navController.navigate(Routes.HOME_FEED_LIST) },
                     onOpenForumList = { navController.navigate(Routes.HOME_FORUM_LIST) },
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
@@ -148,12 +149,14 @@ fun RootView() {
             composable(AppTab.Feed.route) {
                 FeedScreen(
                     profile = profile,
+                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenItem = { navController.navigate(Routes.feedDetail(it)) },
                 )
             }
             composable(AppTab.Experience.route) {
                 ExperienceScreen(
                     profile = profile,
+                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
                     onOpenTopic = { navController.navigate(Routes.topicDetail(it)) },
                     onOpenHandbookSection = { navController.navigate(Routes.handbookSection(it)) },
@@ -162,11 +165,13 @@ fun RootView() {
             composable(AppTab.Tools.route) {
                 ToolsScreen(
                     profile = profile,
+                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenTool = { navController.navigate(Routes.toolRoute(it)) },
                 )
             }
             composable(AppTab.Search.route) {
                 SearchScreen(
+                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
                     onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
                     onOpenHandbookEntry = { navController.navigate(Routes.handbookEntry(it)) },

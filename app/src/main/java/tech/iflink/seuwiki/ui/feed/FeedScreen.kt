@@ -128,6 +128,7 @@ data class FeedFilter(
 @Composable
 fun FeedScreen(
     profile: UserProfileStore,
+    onOpenProfile: () -> Unit,
     onOpenItem: (String) -> Unit,
 ) {
     var scopeKey by rememberSaveable { mutableStateOf("forYou") }
@@ -145,6 +146,7 @@ fun FeedScreen(
         Column(Modifier.fillMaxSize()) {
             ScreenHeader(
                 title = "资讯",
+                onProfileClick = onOpenProfile,
                 trailing = {
                     AnimatedVisibility(visible = scope == FeedScope.All) {
                         Row(
