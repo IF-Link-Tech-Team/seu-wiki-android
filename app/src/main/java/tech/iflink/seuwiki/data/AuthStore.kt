@@ -15,7 +15,9 @@ import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
@@ -258,13 +260,25 @@ class AuthStore private constructor(
         val body = http.get(config.userinfoEndpoint, mapOf("Authorization" to "Bearer $accessToken"))
         val obj = json.parseToJsonElement(body).jsonObject
         UserInfo(
-            subject = obj["sub"]?.jsonPrimitive?.content ?: "",
-            name = obj["name"]?.jsonPrimitive?.content
-                ?: obj["preferred_username"]?.jsonPrimitive?.content ?: "",
-            email = obj["email"]?.jsonPrimitive?.content ?: "",
-            avatarUrl = obj["picture"]?.jsonPrimitive?.content,
+            subject = obj.stringOrNull("sub") ?: "",
+            // username 是 Logto 的实际 claim 名（iOS 侧写的是 preferred_username，取不到）
+            name = obj.stringOrNull("name")
+                ?: obj.stringOrNull("username")
+                ?: obj.stringOrNull("preferred_username") ?: "",
+            email = obj.stringOrNull("email") ?: "",
+            avatarUrl = obj.stringOrNull("picture"),
         )
     }
+
+    /**
+     * 读一个字符串 claim，JSON null 视为「没有」。
+     *
+     * 不能直接写 `jsonPrimitive.content`：JSON 字面量 null 经它会得到**字符串 "null"**
+     * （四个字符），于是上游的 `?:` 和 `ifEmpty` 两道兜底全部失效 —— 界面上就会把
+     * 字面的 "null" 当昵称显示出来。必须先排除 [JsonNull]。
+     */
+    private fun JsonObject.stringOrNull(key: String): String? =
+        this[key]?.takeIf { it !is JsonNull }?.jsonPrimitive?.contentOrNull
 
     private fun resourceParam(): Map<String, String> =
         config.resource?.let { mapOf("resource" to it) } ?: emptyMap()

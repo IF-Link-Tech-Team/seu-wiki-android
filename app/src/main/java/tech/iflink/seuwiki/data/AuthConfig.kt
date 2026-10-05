@@ -13,11 +13,11 @@ data class AuthConfig(
     /**
      * Logto 控制台注册的 **Native** 应用 ID（public client，无 secret）。
      *
-     * 目前仍是占位值：IF.Link 的 Logto 控制台里还没有为原生端（iOS / Android）
-     * 注册过应用，注册前 [isConfigured] 为 false，登录入口降级为「登录服务配置中」
-     * 而不是静默无响应。拿到真值后只需改这一行。
+     * 对应控制台里的应用「SEU Wiki Android」（2026-10-05 注册，Native App 类型）。
+     * 独立于 IF.Link 社区 App 的「IF.Link App」——redirect URI 与 scope 粒度各自独立，
+     * 不共用一张登记列表。
      */
-    val clientId: String = "YOUR_LOGTO_NATIVE_APP_ID",
+    val clientId: String = "yb6csafyv7tviokwbbu2w",
     /** 回调 URL。scheme 已在 AndroidManifest 的 `CFBundleURLTypes` 等价项里注册。 */
     val redirectUri: String = "$REDIRECT_SCHEME://callback",
     val callbackScheme: String = REDIRECT_SCHEME,
@@ -27,10 +27,13 @@ data class AuthConfig(
      */
     val scopes: List<String> = listOf("openid", "profile", "email", "roles", "offline_access"),
     /**
-     * API resource：配置后 Logto 签发 JWT access token（后端 JWKS 本地校验）；
-     * 置 null 则签发 opaque token（后端走 UserInfo 校验）。两种后端都接受。
+     * API resource：**留空**（null），Logto 签发 opaque access token，后端走 UserInfo 校验。
+     *
+     * 与 IF.Link App 的生产实况一致（见 `原生app/android/.../core/config/AuthConfig.kt`，
+     * 该配置根本没有 resource 字段），也是本应用在 Logto 控制台的默认形态 ——
+     * Native 应用页没有 API resource 字段可填。
      */
-    val resource: String? = "https://accounts.iflink.tech/api",
+    val resource: String? = null,
 ) {
     val authorizationEndpoint: String get() = "$issuer/auth"
     val tokenEndpoint: String get() = "$issuer/token"
