@@ -15,6 +15,10 @@ import org.robolectric.annotation.Config
 import org.robolectric.RuntimeEnvironment
 import tech.iflink.seuwiki.data.campusHtmlToAnnotatedString
 import tech.iflink.seuwiki.data.parseIso8601
+import tech.iflink.seuwiki.data.UserProfileStore
+import tech.iflink.seuwiki.data.resolveBookmarks
+import tech.iflink.seuwiki.models.DocEntry
+import tech.iflink.seuwiki.models.DocKind
 import tech.iflink.seuwiki.models.UserFacingError
 import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.Routes
@@ -217,6 +221,80 @@ class SelfCheckTest {
         val now = 1_767_254_399_000L
         assertTrue("过去的时间不该排", now - 3_600_000 < now)
         assertTrue("未来的时间该排", now + 3_600_000 > now)
+    }
+
+    // MARK: - 收藏
+
+    /** 测试里用的假索引。真实数据要打网络，这里只关心 slug ↔ 条目的映射。 */
+    private val index = listOf(
+        DocEntry(slug = "survival/a", kind = DocKind.Survival, title = "保研经验"),
+        DocEntry(slug = "survival/b", kind = DocKind.Survival, title = "ACM 竞赛"),
+        DocEntry(slug = "experience/c", kind = DocKind.Experience, title = "选课指南"),
+    )
+
+    private fun lookup(slug: String): DocEntry? = index.firstOrNull { it.slug == slug }
+
+    /** SharedPreferences 是进程级的，同名会互相污染，所以每个用例用独立文件名。 */
+    private var prefsSeq = 0
+
+    private fun freshPrefs() =
+        context.getSharedPreferences("seuwiki-selfcheck-bookmark-${prefsSeq++}", 0)
+
+    @Test
+    fun `收藏 开关点两下回到原位`() {
+        val store = UserProfileStore(freshPrefs())
+        val slug = "survival/a"
+
+        assertFalse("初始不该是已收藏", store.isBookmarked(slug))
+        store.toggleBookmark(slug)
+        assertTrue("点一下就该收藏上", store.isBookmarked(slug))
+        store.toggleBookmark(slug)
+        assertFalse("再点一下就该取消", store.isBookmarked(slug))
+    }
+
+    @Test
+    fun `收藏 落盘后重开进程还在`() {
+        // 收藏本来是安卓端的一整块死代码（审查 A-13）：toggleBookmark 从没被
+        // UI 调过，存了也没地方看。这条钉住「存得下来、读得回来」。
+        val prefs = freshPrefs()
+        UserProfileStore(prefs).toggleBookmark("survival/a")
+
+        // 重新构造一次 = 冷启动重读磁盘
+        assertTrue("重启后收藏必须还在", UserProfileStore(prefs).isBookmarked("survival/a"))
+    }
+
+    @Test
+    fun `收藏 键名是 slugs 不是 post_ids`() {
+        // 名字要跟实际存的东西对得上：存的是文档 slug，不是论坛 post id。
+        assertEquals("bookmarked_slugs", UserProfileStore.KEY_BOOKMARKS)
+    }
+
+    @Test
+    fun `收藏 索引里没有的 slug 被跳过而不是显示空白行`() {
+        // 对应 iOS `loadBookmarks()`：只保留命中的条目。两端必须一致，
+        // 否则安卓会多出一行没标题的东西。
+        val resolved = resolveBookmarks(setOf("survival/a", "survival/已下线"), ::lookup)
+        assertEquals("只保留命中的 1 条", 1, resolved.size)
+        assertEquals("命中的就是那条", "survival/a", resolved.single().slug)
+    }
+
+    @Test
+    fun `收藏 顺序按标题排 不随集合迭代顺序变`() {
+        // Set 的迭代顺序不保证稳定；不排序的话收藏列表每次重组都可能重排。
+        // 输入是刻意打乱的，期望顺序是写死的。
+        val resolved = resolveBookmarks(setOf("experience/c", "survival/a", "survival/b"), ::lookup)
+        assertEquals(
+            listOf("ACM 竞赛", "保研经验", "选课指南"),
+            resolved.map { it.title },
+        )
+    }
+
+    @Test
+    fun `收藏 标题取自索引而不是存的快照`() {
+        // 存 slug 而不是标题快照：内容改名后要从索引回填新名字，不能留旧名。
+        val renamed = listOf(DocEntry(slug = "survival/a", kind = DocKind.Survival, title = "改名后的标题"))
+        val resolved = resolveBookmarks(setOf("survival/a")) { slug -> renamed.firstOrNull { it.slug == slug } }
+        assertEquals("改名后的标题", resolved.single().title)
     }
 
     // MARK: - 搜索信源路由键

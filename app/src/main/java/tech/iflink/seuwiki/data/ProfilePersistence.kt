@@ -54,7 +54,7 @@ internal object ProfilePersistence {
     private const val KEY_REMINDERS = "reminders"
     private const val KEY_COURSES = "courses"
     private const val KEY_FOLLOWED = "followed_topic_ids"
-    private const val KEY_BOOKMARKS = "bookmarked_post_ids"
+    private const val KEY_BOOKMARKS = "bookmarked_slugs"
 
     private val json = Json { ignoreUnknownKeys = true }
 

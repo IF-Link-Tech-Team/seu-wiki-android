@@ -72,6 +72,16 @@ class DocsStore(
     fun findEntry(slug: String): DocEntry? =
         handbook.asSequence().flatMap { it.entries }.firstOrNull { it.slug == slug }
 
+    /**
+     * 在**手册与经验两个索引**里查。
+     *
+     * [findEntry] 只覆盖手册，但收藏可能来自任意一篇长文 —— 只查手册会让
+     * 「收藏的经验帖」在收藏列表里凭空消失。对应 iOS `loadBookmarks()` 把
+     * 两个索引拼起来一起过滤的做法。
+     */
+    fun findAnyEntry(slug: String): DocEntry? =
+        findEntry(slug) ?: experience.firstOrNull { it.slug == slug }
+
     suspend fun loadHandbook(force: Boolean = false) {
         if (handbookLoading) return
         if (handbook.isNotEmpty() && !force) return
@@ -242,6 +252,27 @@ data class SearchResult(
     val isEmpty: Boolean
         get() = hasSearched && error == null && !loading && total == 0
 }
+
+/**
+ * 把落盘的收藏 slug 解析成可渲染的条目列表。
+ *
+ * 单独抽成顶层纯函数（和 `parseIso8601` 同一路子）是为了让自检能真的打到这里：
+ * `handbook` / `experience` 是 `private set`，测试没法直接塞数据，但这段逻辑
+ * 恰恰是「收藏列表会不会显示出一行没标题的东西」的所在。
+ *
+ * 三条规则：
+ * 1. **查不到的如实跳过**（`mapNotNull`）。存过的 slug 指向的内容可能已经下线，
+ *    渲染成一行空标题比不显示更糟 —— 用户只会以为 App 坏了。对应 iOS
+ *    `loadBookmarks()` 同样只保留命中的条目。
+ * 2. **按 slug 去重**。手册与经验两个索引理论上不会给出同一个 slug，但重复行
+ *    没有任何意义。
+ * 3. **按标题排序**。`Set` 的迭代顺序不保证稳定，直接渲染会让收藏列表每次
+ *    重组都重排一次。
+ *
+ * @param lookup slug → 条目的解析器，调用方传 [DocsStore.findAnyEntry]。
+ */
+fun resolveBookmarks(slugs: Set<String>, lookup: (String) -> DocEntry?): List<DocEntry> =
+    slugs.mapNotNull(lookup).distinctBy { it.slug }.sortedBy { it.title }
 
 /** 搜索结果里一个手册 / 经验条目的深链目标。 */
 data class DocDeepLink(

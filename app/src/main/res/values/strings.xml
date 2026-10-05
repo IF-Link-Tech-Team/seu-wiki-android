@@ -412,4 +412,10 @@
     <string name="sign_out_confirm_message">退出会吊销本机的登录凭证，需要重新走一次浏览器授权才能再登录。</string>
     <string name="reset_confirm_title">恢复默认设置？</string>
     <string name="reset_confirm_message">学院、学段、年级、兴趣标签、课表和已设的提醒都会清空，这一项撤不回来。</string>
+
+    <!-- 收藏（对齐 iOS：只存 slug，标题从索引回填） -->
+    <string name="bookmark_add">收藏</string>
+    <string name="bookmark_remove">取消收藏</string>
+    <string name="profile_section_bookmarks">我的收藏</string>
+    <string name="profile_empty_bookmarks">暂无收藏，在手册或经验详情页点右上角收藏后会出现在这里</string>
 </resources>

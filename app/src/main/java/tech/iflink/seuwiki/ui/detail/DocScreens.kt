@@ -46,6 +46,8 @@ import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.openExternalUrl
+import androidx.compose.foundation.shape.CircleShape
+import tech.iflink.seuwiki.data.UserProfileStore
 
 /**
  * 手册 / 经验条目详情。
@@ -59,6 +61,7 @@ import tech.iflink.seuwiki.ui.openExternalUrl
 @Composable
 fun DocEntryDetailScreen(
     docs: DocsStore,
+    profile: UserProfileStore,
     slug: String,
     anchor: String? = null,
     onBack: () -> Unit,
@@ -76,7 +79,17 @@ fun DocEntryDetailScreen(
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = detail?.entry?.title ?: stringResource(R.string.doc_title), onBack = onBack)
+            DetailHeader(
+                title = detail?.entry?.title ?: stringResource(R.string.doc_title),
+                onBack = onBack,
+                // 收藏放在标题栏右上角，与 iOS `DocDetailView` 的 toolbar 位置一致。
+                trailing = {
+                    BookmarkButton(
+                        bookmarked = profile.isBookmarked(slug),
+                        onToggle = { profile.toggleBookmark(slug) },
+                    )
+                },
+            )
             when {
                 detail == null && error != null -> EmptyStateView(
                     title = stringResource(R.string.doc_load_error_title),
@@ -103,6 +116,33 @@ fun DocEntryDetailScreen(
                 )
             }
         }
+    }
+}
+
+/**
+ * 标题栏右上角的收藏开关。
+ *
+ * 图标用 SF 名 `bookmark` / `bookmark.fill` —— 走的是工程里「按 SF 名称查图标」
+ * 那套跨端约定（§7 明确保留不改），iOS 侧用的是同一对符号，两端视觉自然一致。
+ */
+@Composable
+private fun BookmarkButton(bookmarked: Boolean, onToggle: () -> Unit) {
+    val colors = SeuTheme.colors
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onToggle),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = SeuIcons.of(if (bookmarked) "bookmark.fill" else "bookmark"),
+            contentDescription = stringResource(
+                if (bookmarked) R.string.bookmark_remove else R.string.bookmark_add
+            ),
+            tint = if (bookmarked) colors.accent else colors.label,
+            modifier = Modifier.size(20.dp),
+        )
     }
 }
 

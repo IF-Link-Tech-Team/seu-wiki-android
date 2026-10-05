@@ -72,7 +72,7 @@ class UserProfileStore(
         const val KEY_REMINDERS = "reminders"
         const val KEY_COURSES = "courses"
         const val KEY_FOLLOWED = "followed_topic_ids"
-        const val KEY_BOOKMARKS = "bookmarked_post_ids"
+        const val KEY_BOOKMARKS = "bookmarked_slugs"
     }
 
     // --- profile -----------------------------------------------------------
@@ -105,7 +105,19 @@ class UserProfileStore(
         private set
     var followedTopicIds: Set<String> by mutableStateOf(emptySet())
         private set
-    var bookmarkedPostIds: Set<String> by mutableStateOf(emptySet())
+
+    /**
+     * 收藏的文档 slug（手册 / 经验长文）。
+     *
+     * 原来这里叫 `bookmarkedPostIds`、键名 `bookmarked_post_ids`，但**整个 UI 从来
+     * 没有调用过** [toggleBookmark] —— 也就是安卓端根本没法收藏任何东西，收藏完
+     * 也无处可见（审查 A-13）。iOS 那边是通的：`UserProfile.bookmarkedSlugs` +
+     * `DocDetailView` 右上角按钮 + 个人页 `BookmarksSection`。这里按 iOS 对齐。
+     *
+     * 只存 slug、不存标题：标题从手册/经验索引回填，这样内容改名了不会留下
+     * 一个对不上的旧标题。
+     */
+    var bookmarkedSlugs: Set<String> by mutableStateOf(emptySet())
         private set
 
     init {
@@ -121,7 +133,7 @@ class UserProfileStore(
             reminders = persistence.readReminders(prefs)
             courses = persistence.readCourses(prefs)
             followedTopicIds = persistence.readStringSet(prefs, KEY_FOLLOWED)
-            bookmarkedPostIds = persistence.readStringSet(prefs, KEY_BOOKMARKS)
+            bookmarkedSlugs = persistence.readStringSet(prefs, KEY_BOOKMARKS)
         }
     }
 
@@ -236,13 +248,15 @@ class UserProfileStore(
         persistence.writeStringSet(prefs, KEY_FOLLOWED, followedTopicIds)
     }
 
-    fun toggleBookmark(postId: String) {
-        bookmarkedPostIds = if (postId in bookmarkedPostIds) {
-            bookmarkedPostIds - postId
+    fun isBookmarked(slug: String): Boolean = slug in bookmarkedSlugs
+
+    fun toggleBookmark(slug: String) {
+        bookmarkedSlugs = if (slug in bookmarkedSlugs) {
+            bookmarkedSlugs - slug
         } else {
-            bookmarkedPostIds + postId
+            bookmarkedSlugs + slug
         }
-        persistence.writeStringSet(prefs, KEY_BOOKMARKS, bookmarkedPostIds)
+        persistence.writeStringSet(prefs, KEY_BOOKMARKS, bookmarkedSlugs)
     }
 
     fun resetToDefaults() {
@@ -254,7 +268,7 @@ class UserProfileStore(
         reminders = emptyList()
         courses = emptyList()
         followedTopicIds = emptySet()
-        bookmarkedPostIds = emptySet()
+        bookmarkedSlugs = emptySet()
         saveAll()
     }
 
@@ -283,6 +297,6 @@ class UserProfileStore(
         persistence.writeReminders(prefs, reminders)
         persistence.writeCourses(prefs, courses)
         persistence.writeStringSet(prefs, KEY_FOLLOWED, followedTopicIds)
-        persistence.writeStringSet(prefs, KEY_BOOKMARKS, bookmarkedPostIds)
+        persistence.writeStringSet(prefs, KEY_BOOKMARKS, bookmarkedSlugs)
     }
 }

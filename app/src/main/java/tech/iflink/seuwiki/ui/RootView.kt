@@ -315,6 +315,8 @@ fun RootView(
                 ProfileScreen(
                     profile = profile,
                     auth = auth,
+                    docs = docsStore,
+                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -380,6 +382,7 @@ fun RootView(
                 // slug 形如 survival/观点篇/1-认识，Navigation 解码后原样传出。
                 DocEntryDetailScreen(
                     docs = docsStore,
+                    profile = profile,
                     slug = Routes.decode(entry.arguments?.getString("slug")),
                     anchor = entry.arguments?.getString("anchor"),
                     onBack = { navController.popBackStack() },
