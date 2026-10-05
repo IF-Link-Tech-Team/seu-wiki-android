@@ -37,9 +37,11 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.TimePicker
 import androidx.compose.foundation.layout.defaultMinSize
@@ -509,7 +511,18 @@ private fun ReminderEditSheet(
     }
     val fireText = Format.clock(fireHour, fireMinute)
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    // 表单有标题/截止/时刻/提前量/备注五项，默认半高 sheet 装不下，M3 会把它锚在
+    // 底部，于是**用户第一眼看到的正好是最次要的备注和按钮**，要设的截止时间得先
+    // 往上滚。material3 1.3.1 的 `ModalBottomSheet` 没有 `skipPartiallyExpanded` 参数，
+    // 官方做法是用 state 显式跳过 `PartiallyExpanded` 档位。
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = { it != SheetValue.PartiallyExpanded },
+    )
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
