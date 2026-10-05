@@ -40,6 +40,8 @@ import tech.iflink.seuwiki.design.forumSolidTint
 import tech.iflink.seuwiki.design.forumTint
 import tech.iflink.seuwiki.design.mixWith
 import tech.iflink.seuwiki.models.FeedItem
+import tech.iflink.seuwiki.models.DocEntry
+import tech.iflink.seuwiki.models.DocKind
 import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumTopic
 import tech.iflink.seuwiki.models.HandbookSection
@@ -556,6 +558,68 @@ fun HandbookNodeCell(
             }
         }
         if (showsDivider) InsetDivider(leading = 58.dp)
+    }
+}
+
+/**
+ * 手册 / 经验条目行。
+ *
+ * 用于主页「经验长文」与其它紧凑列表：一行标题 + 一行来源信息，
+ * 左边一个品牌色圆点做信源标识。整行可点，触控区满 48dp。
+ */
+@Composable
+fun DocRow(
+    entry: DocEntry,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null,
+) {
+    val colors = SeuTheme.colors
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .maybeClick(onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(if (entry.kind == DocKind.Experience) colors.orange else colors.green),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = SeuIcons.of(
+                    if (entry.kind == DocKind.Experience) {
+                        "bubble.left.and.text.bubble.right.fill"
+                    } else {
+                        "book.closed.fill"
+                    },
+                ),
+                contentDescription = null,
+                tint = colors.onAccentInverted,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = entry.title,
+                style = SeuType.SubheadlineMedium,
+                color = colors.label,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            entry.description?.let {
+                Text(
+                    text = it,
+                    style = SeuType.Caption,
+                    color = colors.secondaryLabel,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 

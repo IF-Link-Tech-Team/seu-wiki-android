@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.data.toFeedProfile
@@ -42,14 +43,13 @@ import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.CampusReminder
 import tech.iflink.seuwiki.models.Course
 import tech.iflink.seuwiki.models.FeedItem
-import tech.iflink.seuwiki.models.ForumPost
-import tech.iflink.seuwiki.models.MockData
+import tech.iflink.seuwiki.models.DocEntry
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.feed.FeedScope
 import tech.iflink.seuwiki.ui.rows.FeedRow
-import tech.iflink.seuwiki.ui.rows.ForumRow
+import tech.iflink.seuwiki.ui.rows.DocRow
 
 /**
  * 主页.
@@ -66,11 +66,12 @@ import tech.iflink.seuwiki.ui.rows.ForumRow
 fun HomeScreen(
     profile: UserProfileStore,
     feedStore: FeedStore,
+    docs: DocsStore,
     onOpenProfile: () -> Unit,
     onOpenFeedList: () -> Unit,
-    onOpenForumList: () -> Unit,
+    onOpenExperienceList: () -> Unit,
     onOpenFeed: (String) -> Unit,
-    onOpenPost: (String) -> Unit,
+    onOpenEntry: (String) -> Unit,
 ) {
     // 通知区用「为你精选」的第一页，与 SwiftUI 的 HomeView.feedItems 同源；
     // 该 scope 未加载过时会自动触发一次请求。
@@ -80,8 +81,10 @@ fun HomeScreen(
     LaunchedEffect(Unit) { feedStore.loadIfNeeded(FeedScope.ForYou, feedProfile) }
     val feedItems = feedStore.page(FeedScope.ForYou).items
 
-    // 论坛侧按 iOS 现状仍是本地数据。
-    val forumPosts = remember { MockData.forumPosts.take(3) }
+    // 第二块改为真实的经验长文。原来这里渲染 `MockData.forumPosts` ——
+    // 虚构作者与虚构互动数，社区接不通就不该拿假帖子占位。
+    LaunchedEffect(Unit) { docs.loadExperience() }
+    val experience = remember(docs.experience) { docs.experience.take(3) }
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
@@ -99,8 +102,8 @@ fun HomeScreen(
                 item(key = "feed") {
                     FeedSection(feedItems, onOpenFeedList, onOpenFeed)
                 }
-                item(key = "forum") {
-                    ForumSection(forumPosts, onOpenForumList, onOpenPost)
+                item(key = "experience") {
+                    ExperienceSection(experience, onOpenExperienceList, onOpenEntry)
                 }
             }
         }
@@ -265,17 +268,17 @@ private fun FeedSection(
 }
 
 @Composable
-private fun ForumSection(
-    posts: List<ForumPost>,
+private fun ExperienceSection(
+    entries: List<DocEntry>,
     onOpenList: () -> Unit,
-    onOpenPost: (String) -> Unit,
+    onOpenEntry: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(title = "论坛新帖", onAction = onOpenList)
+        SectionHeader(title = "经验长文", onAction = onOpenList)
         Column(Modifier.cardStyle(padding = 0.dp)) {
-            posts.forEachIndexed { index, post ->
-                ForumRow(post = post, onClick = { onOpenPost(post.id) })
-                if (index < posts.size - 1) InsetDivider()
+            entries.forEachIndexed { index, entry ->
+                DocRow(entry = entry, onClick = { onOpenEntry(entry.slug) })
+                if (index < entries.size - 1) InsetDivider()
             }
         }
     }

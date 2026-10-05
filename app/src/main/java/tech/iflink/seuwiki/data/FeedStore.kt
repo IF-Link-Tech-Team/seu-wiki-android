@@ -7,21 +7,25 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tech.iflink.seuwiki.models.FeedItem
-import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.feed.FeedScope
 
 /**
  * 资讯状态仓库，对应 iOS 端 `FeedStore`。
  *
- * 每个 console scope（为你精选 / 全部 / 各分类）各自维护一页 cursor 分页状态；
- * 网络失败时回退 MockData 并标记离线，不阻塞 UI —— 与 SwiftUI 侧 `catch` 分支
- * 的行为一致。
+ * 每个 console scope（为你精选 / 全部 / 各分类）各自维护一页 cursor 分页状态。
  *
- * 构造时传 [mockOnly] = true 可永远使用 MockData 且不发请求（Preview / 截图用）。
+ * **网络失败不再回退假数据**（S-10）。原来的实现会静默塞一份 `MockData` 顶上，
+ * 于是「断网了」和「这个分类今天没新内容」在界面上长得一模一样，用户完全无从
+ * 分辨。现在失败就是失败：保留已有内容、置 [PageState.isOffline]，
+ * 交由 UI 显示可重试的错误态。
+ *
+ * 刷新（[refresh]）与加载更多（[loadMore]）可能并发。两个请求都打同一批接口，
+ * 只有 refresh 会重置列表 —— 如果 loadMore 那一页在 refresh 之后才回来，
+ * 它就会被**追加到已经换过的新列表后面**，出现重复与错序。每个 scope 带一个
+ * generation 计数，请求返回时先比对，不一致就整份丢弃。
  */
 class FeedStore(
     private val client: FeedApiClient = FeedApiClient(),
-    private val mockOnly: Boolean = false,
     private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Main.immediate),
 ) {
 
@@ -32,12 +36,19 @@ class FeedStore(
         val isLoading: Boolean = false,
         val isLoadingMore: Boolean = false,
         val hasLoaded: Boolean = false,
-        /** true 表示当前数据是网络失败后的 MockData 回退。 */
+        /** true 表示最近一次请求失败，当前展示的是**已加载到的旧内容**（或空）。 */
         val isOffline: Boolean = false,
     )
 
     private val states = mutableMapOf<String, PageState>()
     private val detailCache = mutableMapOf<String, RemoteFeedDetail>()
+
+    /**
+     * 每个 scope 的「列表世代」。只有 [refresh] 会自增（它换掉了整份列表）；
+     * 在途的 [loadMore] 返回时若发现世代已经变了，说明用户在这期间刷新过，
+     * 自己拿到的那一页属于**旧列表**，必须丢弃而不是追加。
+     */
+    private val generations = mutableMapOf<String, Long>()
 
     /**
      * 每次状态变更自增，调用方读它即可让 Compose 重组。
@@ -94,32 +105,28 @@ class FeedStore(
         refresh(scope, profile)
     }
 
-    /** 下拉刷新 / 首次加载：成功后重置分页，失败回退 MockData。 */
+    /** 下拉刷新 / 首次加载：成功后重置分页，失败保留旧内容并标记离线。 */
     fun refresh(scope: FeedScope, profile: FeedProfile) {
         if (page(scope).isLoading) return
         val key = FeedScope.key(scope)
-        if (mockOnly) {
-            states[key] = PageState(items = mockItems(scope), hasLoaded = true)
-            bump()
-            return
-        }
+        // 换代：让此刻仍在途的 loadMore 失效。
+        generations[key] = (generations[key] ?: 0L) + 1L
         states[key] = page(scope).copy(isLoading = true)
         bump()
         coroutineScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { fetch(scope, profile, null) }
                 states[key] = PageState(
-                    items = result.items,
+                    items = result.items.distinctBy { it.id },
                     nextCursor = result.nextCursor,
                     hasLoaded = true,
                 )
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
-                // 网络失败：保留已有内容，空则回退 MockData，并标记离线。
+            } catch (e: Exception) {
+                // 网络失败：**保留已有内容**，不塞假数据，并标记离线让 UI 给重试入口。
                 val current = states[key] ?: PageState()
                 states[key] = current.copy(
-                    items = current.items.ifEmpty { mockItems(scope) },
                     nextCursor = null,
                     hasLoaded = true,
                     isOffline = true,
@@ -135,20 +142,26 @@ class FeedStore(
     fun loadMore(scope: FeedScope, profile: FeedProfile) {
         val state = page(scope)
         val cursor = state.nextCursor
-        if (mockOnly || !state.hasLoaded || state.isLoading || state.isLoadingMore ||
+        if (!state.hasLoaded || state.isLoading || state.isLoadingMore ||
             state.isOffline || cursor == null
         ) {
             return
         }
         val key = FeedScope.key(scope)
+        val generationAtStart = generations[key] ?: 0L
         states[key] = state.copy(isLoadingMore = true)
         bump()
         coroutineScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { fetch(scope, profile, cursor) }
+                // 用户在请求在途时刷新过：这一页属于旧列表，丢掉。
+                if ((generations[key] ?: 0L) != generationAtStart) return@launch
                 states[key]?.let { current ->
                     states[key] = current.copy(
-                        items = current.items + result.items,
+                        // 按 id 去重。cursor 分页在条目插入/删除时可能重复返回同一条，
+                        // 而 LazyColumn 的 `key` 一旦重复**直接抛
+                        // IllegalArgumentException 崩掉**（A-2 / S-9）。
+                        items = (current.items + result.items).distinctBy { it.id },
                         nextCursor = result.nextCursor,
                     )
                 }
@@ -171,15 +184,6 @@ class FeedStore(
      */
     suspend fun detail(item: FeedItem): RemoteFeedDetail {
         detailCache[item.id]?.let { return it }
-        if (mockOnly) {
-            return RemoteFeedDetail(
-                originalTitle = null,
-                summary = item.summary,
-                reason = null,
-                bodyHtml = null,
-                originalUrl = item.originalUrl,
-            )
-        }
         val detail = withContext(Dispatchers.IO) { client.itemDetail(item.id) }
         detailCache[item.id] = detail
         return detail
@@ -201,20 +205,6 @@ class FeedStore(
 
             is FeedScope.Category -> client.timeline(category = scope.category, cursor = cursor)
         }
-
-    /** 离线 / 截图兜底：命中理由优先在前，其余按时间倒序，与线上语义对齐。 */
-    private fun mockItems(scope: FeedScope): List<FeedItem> = when (scope) {
-        FeedScope.ForYou -> MockData.feedItems.sortedWith(
-            compareByDescending<FeedItem> { it.matchReasons.isNotEmpty() }
-                .thenByDescending { it.publishedAt ?: 0L },
-        )
-
-        FeedScope.All -> MockData.feedItems.sortedByDescending { it.publishedAt ?: 0L }
-
-        is FeedScope.Category -> MockData.feedItems
-            .filter { it.category == scope.category }
-            .sortedByDescending { it.publishedAt ?: 0L }
-    }
 
     /**
      * `/api/site/for-you` 需要的画像字段，够用即可。

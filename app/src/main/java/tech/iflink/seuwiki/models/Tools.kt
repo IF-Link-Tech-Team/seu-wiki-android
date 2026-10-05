@@ -66,6 +66,15 @@ data class ToolItem(
     val iconKey: String,
     val tintKey: String,
     val subtitle: String,
+    /**
+     * 真的能打开吗？
+     *
+     * 8 个工具里目前只有「课表」和「绩点计算」有实现，其余 6 个点了只会进
+     * 一个占位页。原来副标题写得像都能用（「借阅与研讨间」「余额与流水」…），
+     * 属于用文案假装功能已上线。置 false 后界面上会明确标「即将推出」，
+     * 并且点击不再进入占位页 —— 没有接通的功能不该假装能用。
+     */
+    val isAvailable: Boolean = false,
 )
 
 /** A handbook document node: section → entries. */
@@ -83,3 +92,26 @@ data class HandbookEntry(
     val body: String,
     val updatedAt: Long,
 )
+
+/**
+ * 工具清单。
+ *
+ * 这是**应用自身的功能目录**，不是用户数据、也不是示例内容，所以从 MockData
+ * 移出来单列。移出来的原因是：MockData 里混着编造的帖子、评论和互动数，
+ * 那些必须彻底删掉；而工具清单本身是真实的配置，不该跟着一起删。
+ */
+object ToolCatalog {
+
+    val tools: List<ToolItem> = listOf(
+        ToolItem("timetable", "课表", "calendar.day.timeline.left", "blue", "今日课程与周视图", isAvailable = true),
+        ToolItem("gpa", "绩点计算", "percent", "green", "五分制换算", isAvailable = true),
+        ToolItem("exam", "考试安排", "pencil.and.list.clipboard", "orange", "期末倒计时"),
+        ToolItem("library", "图书馆", "books.vertical", "purple", "借阅与研讨间"),
+        ToolItem("card", "校园卡", "creditcard", "pink", "余额与流水"),
+        ToolItem("bus", "班车查询", "bus", "teal", "三校区通勤"),
+        ToolItem("map", "校园地图", "map", "mint", "楼宇导航"),
+        ToolItem("elective", "选课助手", "checklist", "indigo", "避雷与推荐"),
+    )
+
+    fun tool(id: String): ToolItem? = tools.firstOrNull { it.id == id }
+}

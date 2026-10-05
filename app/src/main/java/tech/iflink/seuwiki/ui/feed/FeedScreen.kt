@@ -55,7 +55,6 @@ import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.models.FeedCategory
 import tech.iflink.seuwiki.models.FeedItem
-import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.LoadingView
@@ -499,7 +498,7 @@ private val FeedFilterSaver = Saver<FeedFilter, String>(
 /**
  * 网络失败时的轻量提示，对应 `FeedOfflineBanner`。
  *
- * 不阻塞浏览：列表此时显示的是 MockData 回退内容。
+ * 不阻塞浏览：列表保留已加载到的旧内容，失败时给出重试入口。
  */
 @Composable
 private fun FeedOfflineBanner() {

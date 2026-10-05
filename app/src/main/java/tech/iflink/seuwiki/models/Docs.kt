@@ -97,3 +97,28 @@ data class DocFilter(
     val label: String,
     val values: List<String>,
 )
+
+/**
+ * 经验 tab 的四个子页，按 console 胶囊顺序。
+ *
+ * 取代原先的 `ForumFeedTab`：那个 enum 的「热门 / 关注」两页是靠
+ * `MockData.forumPosts` 的假帖子撑着的，而 seu-wiki-forum 至今没有任何
+ * HTTP API 路由，社区功能接不通。现在四个子页全部来自真实文档接口。
+ */
+enum class ExperienceTab(val key: String, val label: String) {
+    /** 经验长文列表。 */
+    Hot("hot", "热门"),
+
+    /** 经验长文的分面筛选（场景 / 年级 / 学院）。 */
+    Topics("topics", "话题"),
+
+    /** 东大生存手册文档树。 */
+    Handbook("handbook", "生存手册"),
+
+    /** 社区关注 —— 尚未上线，界面给诚实空状态。 */
+    Following("following", "关注");
+
+    companion object {
+        val all: List<ExperienceTab> get() = entries.toList()
+    }
+}

@@ -57,16 +57,16 @@ import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
-import tech.iflink.seuwiki.models.MockData
+import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.ui.detail.FeedItemDetailScreen
-import tech.iflink.seuwiki.ui.detail.ForumPostDetailScreen
 import tech.iflink.seuwiki.ui.detail.HomeFeedListScreen
-import tech.iflink.seuwiki.ui.detail.HomeForumListScreen
-import tech.iflink.seuwiki.ui.detail.HandbookEntryScreen
-import tech.iflink.seuwiki.ui.detail.HandbookSectionScreen
+import tech.iflink.seuwiki.ui.detail.HomeExperienceListScreen
+import tech.iflink.seuwiki.ui.detail.CommunityComingSoonScreen
+import tech.iflink.seuwiki.ui.detail.DocEntryDetailScreen
+import tech.iflink.seuwiki.ui.detail.HandbookPartScreen
 import tech.iflink.seuwiki.ui.detail.SearchSourceListScreen
-import tech.iflink.seuwiki.ui.detail.TopicDetailScreen
 import tech.iflink.seuwiki.ui.experience.ExperienceScreen
+import tech.iflink.seuwiki.ui.feed.FeedScope
 import tech.iflink.seuwiki.ui.feed.FeedScreen
 import tech.iflink.seuwiki.ui.home.HomeScreen
 import tech.iflink.seuwiki.ui.profile.ProfileScreen
@@ -89,7 +89,24 @@ enum class AppTab(
     Search("搜索", SeuIcons.Search, "search");
 }
 
-/** Route templates. The five tab roots double as `AppTab.route`. */
+/**
+ * 路由模板。五个一级页面同时作为 [AppTab.route]。
+ *
+ * 所有**动态路径段**（id / slug / 关键词）都必须经 [seg] 编码后拼进来，
+ * 不能直接插值。原来的写法有两个真实故障：
+ *
+ * 1. id 直接插值，而资讯 id 与手册 slug 里可能出现 `?`、`#`、`/`。
+ *    `?` 之后的内容会被当成 query、`#` 之后根本到不了 Navigation，
+ *    结果就是路由匹配失败甚至抛异常。
+ * 2. 关键词用 `URLEncoder.encode` —— 它是 **form 编码**，空格会编成 `+`。
+ *    而 path 段里 `+` 是字面的加号，Navigation 也不会把它还原成空格，
+ *    于是搜「machine learning」点查看更多会变成搜「machine+learning」，永远搜不到。
+ *
+ * 正确做法是对**单个路径段**做 percent-encoding，空格是 `%20`。
+ * 这里用 [android.net.Uri.encode] 的「保留 `/`」重载再把 `/` 换回
+ * `%2F`：slug 形如 `survival/观点篇/1-认识`，斜杠必须留在路径里当分隔符
+ * 还是当数据，由调用点决定 —— [seg] 一律编码，跨段的交给调用方自己拼。
+ */
 object Routes {
     const val PROFILE = "profile"
     const val HOME_FEED_LIST = "home/feed-list"
@@ -98,25 +115,36 @@ object Routes {
     const val FORUM_DETAIL = "forum/detail/{id}"
     const val TOPIC_DETAIL = "forum/topic/{slug}"
     const val HANDBOOK_SECTION = "handbook/section/{id}"
-    const val HANDBOOK_ENTRY = "handbook/entry/{id}"
+    const val HANDBOOK_ENTRY = "handbook/entry/{slug}"
     const val SEARCH_SOURCE_LIST = "search/list/{scope}/{keyword}"
     const val TOOL_TIMETABLE = "tools/timetable"
     const val TOOL_GPA = "tools/gpa"
     const val TOOL_PLACEHOLDER = "tools/other/{id}"
 
-    fun feedDetail(id: String) = "feed/detail/$id"
-    fun forumDetail(id: String) = "forum/detail/$id"
-    fun topicDetail(slug: String) = "forum/topic/$slug"
-    fun handbookSection(id: String) = "handbook/section/$id"
-    fun handbookEntry(id: String) = "handbook/entry/$id"
+    /**
+     * 编码**单个**路径段。
+     *
+     * 允许字符集与 RFC 3986 的 `pchar` 一致（字母数字 + `-._~` + 子分隔符），
+     * 空格编成 `%20` 而不是 `+`。
+     */
+    fun seg(value: String): String =
+        java.net.URLEncoder.encode(value, "UTF-8")
+            .replace("+", "%20")
+            .replace("%2F", "/")
+            .replace("%3A", ":")
+
+    fun feedDetail(id: String) = "feed/detail/${seg(id)}"
+    fun forumDetail(id: String) = "forum/detail/${seg(id)}"
+    fun topicDetail(slug: String) = "forum/topic/${seg(slug)}"
+    fun handbookSection(id: String) = "handbook/section/${seg(id)}"
+    fun handbookEntry(slug: String) = "handbook/entry/${seg(slug)}"
     fun searchSourceList(scope: String, keyword: String) =
-        "search/list/${java.net.URLEncoder.encode(scope, "UTF-8")}/" +
-            java.net.URLEncoder.encode(keyword, "UTF-8")
+        "search/list/${seg(scope)}/${seg(keyword)}"
 
     fun toolRoute(id: String): String = when (id) {
         "timetable" -> TOOL_TIMETABLE
         "gpa" -> TOOL_GPA
-        else -> "tools/other/$id"
+        else -> "tools/other/${seg(id)}"
     }
 }
 
@@ -137,11 +165,13 @@ fun RootView() {
     val profile = remember { UserProfileStore(context.applicationContext) }
     // 单例：OIDC 回调由 AuthCallbackActivity 处理，必须和这里看到同一个 session。
     val auth = remember { AuthStore.get(context.applicationContext) }
-    // 资讯侧接 seu.wiki 线上接口；论坛/手册/工具/个人页按 iOS 现状仍是本地数据。
-    // 登录后自动附带 Bearer 凭证（匿名也能访问，登录不是前置条件）。
-    val feedStore = remember {
-        FeedStore(client = FeedApiClient(tokenProvider = { auth.accessToken() }))
-    }
+    // 资讯侧接 seu.wiki 线上接口。手册 / 经验长文 / 统一搜索走 DocsStore。
+    //
+    // 注意**不带 token**：`api/site` 这一组全是公开只读 GET，后端根本不校验鉴权
+    // （实测带一个乱写的 Bearer 一样 200）。挂了 token 只会把「能不能读到内容」
+    // 和「登录态是否健康」耦合起来，还可能让一次刷列表被续期失败牵连。
+    val feedStore = remember { FeedStore(client = FeedApiClient()) }
+    val docsStore = remember { DocsStore() }
     val navController = rememberNavController()
 
     val backStack by navController.currentBackStack.collectAsStateWithLifecycle()
@@ -167,11 +197,12 @@ fun RootView() {
                 HomeScreen(
                     profile = profile,
                     feedStore = feedStore,
+                    docs = docsStore,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenFeedList = { navController.navigate(Routes.HOME_FEED_LIST) },
-                    onOpenForumList = { navController.navigate(Routes.HOME_FORUM_LIST) },
+                    onOpenExperienceList = { navController.navigate(Routes.HOME_FORUM_LIST) },
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
-                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
+                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                 )
             }
             composable(AppTab.Feed.route) {
@@ -185,10 +216,10 @@ fun RootView() {
             composable(AppTab.Experience.route) {
                 ExperienceScreen(
                     profile = profile,
+                    docs = docsStore,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
-                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
-                    onOpenTopic = { navController.navigate(Routes.topicDetail(it)) },
-                    onOpenHandbookSection = { navController.navigate(Routes.handbookSection(it)) },
+                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
+                    onOpenHandbookPart = { navController.navigate(Routes.handbookSection(it)) },
                 )
             }
             composable(AppTab.Tools.route) {
@@ -200,11 +231,10 @@ fun RootView() {
             }
             composable(AppTab.Search.route) {
                 SearchScreen(
-                    feedStore = feedStore,
+                    docs = docsStore,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
-                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
-                    onOpenHandbookEntry = { navController.navigate(Routes.handbookEntry(it)) },
+                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                     onOpenSourceList = { scope, keyword ->
                         navController.navigate(Routes.searchSourceList(scope.label, keyword))
                     },
@@ -220,17 +250,20 @@ fun RootView() {
                 )
             }
             composable(Routes.HOME_FEED_LIST) {
+                // 「为你精选」里的精选条目取自真实 for-you 结果，不再是本地假数据。
+                val selected = feedStore.page(FeedScope.ForYou).items.filter { it.isSelected }
                 HomeFeedListScreen(
-                    items = MockData.feedItems.filter { it.isSelected },
+                    items = selected,
                     onBack = { navController.popBackStack() },
                     onOpenItem = { navController.navigate(Routes.feedDetail(it)) },
                 )
             }
             composable(Routes.HOME_FORUM_LIST) {
-                HomeForumListScreen(
-                    posts = MockData.forumPosts,
+                // 社区列表改为经验长文：forum 那套帖子是编造的，不再走生产路径。
+                HomeExperienceListScreen(
+                    docs = docsStore,
                     onBack = { navController.popBackStack() },
-                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
+                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                 )
             }
             composable(
@@ -244,43 +277,42 @@ fun RootView() {
                     onBack = { navController.popBackStack() },
                 )
             }
+            // 社区详情入口保留路由但只给「即将上线」：seu-wiki-forum 至今没有任何
+            // HTTP API 路由，发帖/点赞/评论/关注都接不通。原来的 ForumPostDetailScreen
+            // 是拿 MockData 里编造的帖子正文与「林晚舟」等虚构用户渲染的，
+            // 已从生产路径移除 —— 编造内容不该出现在用户面前。
             composable(
                 route = Routes.FORUM_DETAIL,
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
-            ) { entry ->
-                ForumPostDetailScreen(
-                    profile = profile,
-                    postId = entry.arguments?.getString("id").orEmpty(),
-                    onBack = { navController.popBackStack() },
-                )
+            ) {
+                CommunityComingSoonScreen(onBack = { navController.popBackStack() })
             }
             composable(
                 route = Routes.TOPIC_DETAIL,
                 arguments = listOf(navArgument("slug") { type = NavType.StringType }),
-            ) { entry ->
-                TopicDetailScreen(
-                    profile = profile,
-                    topicSlug = entry.arguments?.getString("slug").orEmpty(),
-                    onBack = { navController.popBackStack() },
-                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
-                )
+            ) {
+                CommunityComingSoonScreen(onBack = { navController.popBackStack() })
             }
             composable(
                 route = Routes.HANDBOOK_SECTION,
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
             ) { entry ->
-                HandbookSectionScreen(
-                    sectionId = entry.arguments?.getString("id").orEmpty(),
+                HandbookPartScreen(
+                    docs = docsStore,
+                    partKey = entry.arguments?.getString("id").orEmpty(),
                     onBack = { navController.popBackStack() },
                     onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                 )
             }
             composable(
                 route = Routes.HANDBOOK_ENTRY,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                arguments = listOf(navArgument("slug") { type = NavType.StringType }),
             ) { entry ->
-                HandbookEntryScreen(
-                    entryId = entry.arguments?.getString("id").orEmpty(),
+                // slug 形如 survival/观点篇/1-认识，Navigation 解码后原样传出。
+                DocEntryDetailScreen(
+                    docs = docsStore,
+                    slug = entry.arguments?.getString("slug").orEmpty(),
+                    anchor = entry.arguments?.getString("anchor"),
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -295,8 +327,8 @@ fun RootView() {
                     scope = entry.arguments?.getString("scope").orEmpty(),
                     keyword = entry.arguments?.getString("keyword").orEmpty(),
                     onBack = { navController.popBackStack() },
+                    docs = docsStore,
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
-                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
                     onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                 )
             }

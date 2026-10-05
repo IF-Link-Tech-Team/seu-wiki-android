@@ -11,7 +11,6 @@ import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
 import tech.iflink.seuwiki.models.CampusReminder
 import tech.iflink.seuwiki.models.Course
-import tech.iflink.seuwiki.models.MockData
 
 /**
  * User profile and app-level state.
@@ -35,7 +34,6 @@ class UserProfileStore(context: Context) {
         const val DEFAULT_DEGREE = "本科"
         const val DEFAULT_GRADE = "大三"
         val DEFAULT_INTERESTS = listOf("保研", "SRTP", "机器学习")
-        val DEFAULT_FOLLOWED_TOPICS = setOf("baoyan", "srtp")
 
         // SharedPreferences keys — the counterpart of the iOS ProfileStorage keys.
         const val KEY_INITIALIZED = "profile_initialized"
@@ -62,11 +60,22 @@ class UserProfileStore(context: Context) {
 
     // --- local collections -------------------------------------------------
 
-    var reminders: List<CampusReminder> by mutableStateOf(MockData.reminders)
+    /**
+     * 提醒与课表默认**为空**（S-4）。
+     *
+     * 原来默认值是 `MockData.reminders` / `MockData.courses`，也就是全新安装
+     * 的用户一进主页就看到两条他从没添加过的提醒（「推免申请材料提交截止」）和三门
+     * 他从没选过的课（「信号与系统」）。这些假数据还会被 `init` 里的 `saveAll()`
+     * **写进磁盘**，从此变成用户数据 —— 卸载重装都还在。
+     *
+     * 现在默认空集合：没有提醒就显示「还没有提醒」的引导，没有课表就显示
+     * 「去教务系统导入」的说明。要测试内容请在 debug 构建里注入。
+     */
+    var reminders: List<CampusReminder> by mutableStateOf(emptyList())
         private set
-    var courses: List<Course> by mutableStateOf(MockData.courses)
+    var courses: List<Course> by mutableStateOf(emptyList())
         private set
-    var followedTopicIds: Set<String> by mutableStateOf(DEFAULT_FOLLOWED_TOPICS)
+    var followedTopicIds: Set<String> by mutableStateOf(emptySet())
         private set
     var bookmarkedPostIds: Set<String> by mutableStateOf(emptySet())
         private set
@@ -80,10 +89,9 @@ class UserProfileStore(context: Context) {
             degree = prefs.getString(KEY_DEGREE, DEFAULT_DEGREE) ?: DEFAULT_DEGREE
             grade = prefs.getString(KEY_GRADE, DEFAULT_GRADE) ?: DEFAULT_GRADE
             interests = decodeList(KEY_INTERESTS, DEFAULT_INTERESTS, String.serializer())
-            reminders = decodeList(KEY_REMINDERS, MockData.reminders, CampusReminder.serializer())
-            courses = decodeList(KEY_COURSES, MockData.courses, Course.serializer())
-            followedTopicIds =
-                prefs.getStringSet(KEY_FOLLOWED, DEFAULT_FOLLOWED_TOPICS) ?: DEFAULT_FOLLOWED_TOPICS
+            reminders = decodeList(KEY_REMINDERS, emptyList(), CampusReminder.serializer())
+            courses = decodeList(KEY_COURSES, emptyList(), Course.serializer())
+            followedTopicIds = prefs.getStringSet(KEY_FOLLOWED, emptySet()).orEmpty()
             bookmarkedPostIds = prefs.getStringSet(KEY_BOOKMARKS, emptySet()) ?: emptySet()
         }
     }
@@ -172,9 +180,9 @@ class UserProfileStore(context: Context) {
         degree = DEFAULT_DEGREE
         grade = DEFAULT_GRADE
         interests = DEFAULT_INTERESTS
-        reminders = MockData.reminders
-        courses = MockData.courses
-        followedTopicIds = DEFAULT_FOLLOWED_TOPICS
+        reminders = emptyList()
+        courses = emptyList()
+        followedTopicIds = emptySet()
         bookmarkedPostIds = emptySet()
         saveAll()
     }

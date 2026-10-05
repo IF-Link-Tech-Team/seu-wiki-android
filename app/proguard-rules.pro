@@ -23,3 +23,10 @@
 -keepclasseswithmembers class tech.iflink.seuwiki.data.** {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+# Tink（androidx.security:security-crypto 的底层依赖）只是**编译期**用到
+# com.google.errorprone.annotations 那几个注解，它们在运行时并不存在。
+# 没有这三条 dontwarn，R8 会把它们当成「缺失的类」而直接让 release 构建失败。
+-dontwarn com.google.errorprone.annotations.**
+-dontwarn javax.annotation.**
+-dontwarn com.google.crypto.tink.**

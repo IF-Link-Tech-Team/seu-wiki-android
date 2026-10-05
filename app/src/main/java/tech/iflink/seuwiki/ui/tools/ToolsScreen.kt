@@ -40,7 +40,7 @@ import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.design.toolIconCorner
 import tech.iflink.seuwiki.design.toolTintOf
-import tech.iflink.seuwiki.models.MockData
+import tech.iflink.seuwiki.models.ToolCatalog
 import tech.iflink.seuwiki.models.ToolItem
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.ScreenHeader
@@ -60,7 +60,7 @@ fun ToolsScreen(
     onOpenProfile: () -> Unit,
     onOpenTool: (String) -> Unit,
 ) {
-    val tools = remember { MockData.tools }
+    val tools = remember { ToolCatalog.tools }
 
     TabPage {
         Column {

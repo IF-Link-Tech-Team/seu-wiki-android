@@ -60,6 +60,18 @@ object IosPalette {
  */
 data class SeuColorScheme(
     val accent: Color,
+    /**
+     * 压在 [accent] 底色上的文字色。
+     *
+     * 这一项的存在是因为 `#34D6AB`（深色模式的品牌亮绿）压白字对比度只有
+     * **1.83:1**，远低于 WCAG AA 要求的 4.5:1 —— 属于实打实的不可读。
+     * 深色下改成 `#00382B`（品牌深绿），对亮绿的对比度是 **7.08:1**。
+     *
+     * 亮色模式的 accent 是 `#0E5A46` 深绿，本来就压白字够用，所以这里仍是白色。
+     * 凡是「accent 作底 + 文字叠加」的地方（console 胶囊选中态、chip、
+     * 「关注」按钮、彩色卡片）都必须用这个 token，不要直接写 Color.White。
+     */
+    val onAccentInverted: Color,
     val groupedBackground: Color,
     val secondaryGroupedBackground: Color,
     val tertiaryFill: Color,
@@ -81,6 +93,7 @@ data class SeuColorScheme(
 
 val LightSeuColors = SeuColorScheme(
     accent = SeuColors.AccentLight,
+    onAccentInverted = Color.White,
     groupedBackground = Color(0xFFF2F2F7),
     secondaryGroupedBackground = Color(0xFFFFFFFF),
     tertiaryFill = Color(0x1E767680),
@@ -119,6 +132,7 @@ fun Color.mixWith(other: Color, by: Float): Color {
 
 val DarkSeuColors = SeuColorScheme(
     accent = SeuColors.AccentDark,
+    onAccentInverted = Color(0xFF00382B),
     groupedBackground = Color(0xFF000000),
     secondaryGroupedBackground = Color(0xFF1C1C1E),
     tertiaryFill = Color(0x3D767680),

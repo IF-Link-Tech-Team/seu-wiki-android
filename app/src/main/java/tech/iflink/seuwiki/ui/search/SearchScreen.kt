@@ -30,6 +30,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,7 +49,12 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import tech.iflink.seuwiki.data.FeedStore
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.design.CardColumn
 import tech.iflink.seuwiki.design.ConsoleBar
 import tech.iflink.seuwiki.design.ContinuousRoundedShape
@@ -59,9 +66,8 @@ import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.FeedItem
-import tech.iflink.seuwiki.models.ForumPost
-import tech.iflink.seuwiki.models.HandbookEntry
-import tech.iflink.seuwiki.models.MockData
+import tech.iflink.seuwiki.models.DocKind
+import tech.iflink.seuwiki.models.DocRef
 import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.LoadingView
@@ -92,64 +98,64 @@ enum class SearchScope(val label: String, val symbol: String) {
         }
 }
 
-/** The three aggregated result buckets for one query. */
+/**
+ * 一次查询的三个结果桶。
+ *
+ * 三信源映射（两端必须一致）：资讯卡 = pool 的 `items`；
+ * 经验卡 = `docs.filter{ kind == experience }`；手册卡 = `docs.filter{ kind == survival }`。
+ * 原来这里的经验桶是 `MockData.forumPosts`（虚构用户与虚构点赞数），已删除。
+ */
 class SearchResults(
     val keyword: String,
     val feed: List<FeedItem>,
-    val forum: List<ForumPost>,
-    val handbook: List<HandbookEntry>,
+    val experience: List<DocRef>,
+    val handbook: List<DocRef>,
 ) {
-    val isEmpty: Boolean get() = feed.isEmpty() && forum.isEmpty() && handbook.isEmpty()
+    val isEmpty: Boolean get() = feed.isEmpty() && experience.isEmpty() && handbook.isEmpty()
 }
 
 /**
  * 搜索.
  *
- * Port of `SearchHomeView`: one query fans out across 通知 / 经验 / 手册. On the
- * 全部 scope each hit source gets a section card (glyph, name, hit count, up to
- * three rows, 查看更多); picking a single scope shows that source's full list.
+ * 三个信源现在**全部来自后端**：`GET /api/site/pool` 一次响应里同时给
+ * 资讯 `items` 与手册/经验 `docs`，客户端只做 kind 的映射与拆分，不再本地匹配。
  *
- * Matching is the same case- and diacritic-insensitive containment the SwiftUI
- * `SearchEngine` uses, and results are highlighted with the same emphasis.
+ * 匹配与高亮仍沿用 SwiftUI `SearchEngine` 的 containment + 加粗强调。
  */
+@OptIn(FlowPreview::class)
 @Composable
 fun SearchScreen(
-    feedStore: FeedStore,
+    docs: DocsStore,
     onOpenProfile: () -> Unit,
     onOpenFeed: (String) -> Unit,
-    onOpenPost: (String) -> Unit,
-    onOpenHandbookEntry: (String) -> Unit,
+    onOpenEntry: (String) -> Unit,
     onOpenSourceList: (SearchScope, String) -> Unit,
 ) {
     var keyword by rememberSaveable { mutableStateOf("") }
     var scopeKey by rememberSaveable { mutableStateOf(SearchScope.All.name) }
     val scope = SearchScope.entries.firstOrNull { it.name == scopeKey } ?: SearchScope.All
     val keyboard = LocalSoftwareKeyboardController.current
+    val searchScope = rememberCoroutineScope()
 
-    // 「通知」信源走线上 pool 搜索（与 iOS 的 SearchStore 一致）；论坛/手册两侧
-    // 按 iOS 现状仍是本地匹配。搜索失败时静默回退本地，保证聚合结果不为空。
-    val query = keyword.trim()
-    var remoteFeed by remember { mutableStateOf<List<FeedItem>>(emptyList()) }
-    var isSearching by remember { mutableStateOf(false) }
-    LaunchedEffect(query) {
-        if (query.isEmpty()) {
-            remoteFeed = emptyList()
-            return@LaunchedEffect
-        }
-        isSearching = true
-        remoteFeed = runCatching {
-            feedStore.pool(query)
-        }.getOrDefault(emptyList())
-        isSearching = false
-    }
+    val result = docs.searchResult
+    val results = SearchResults(
+        keyword = result.query,
+        feed = result.feed,
+        experience = result.experience,
+        handbook = result.handbook,
+    )
 
-    val results = remember(keyword, remoteFeed) {
-        if (remoteFeed.isNotEmpty()) {
-            // 线上有命中就直接用，避免本地 mock 匹配混进来。
-            search(keyword, feed = remoteFeed)
-        } else {
-            search(keyword)
-        }
+    // 300ms 防抖 + collectLatest：原来每个按键都直接发一次请求，
+    // 一边打字一边把 `/api/site/pool` 打满。collectLatest 会在新关键词到达时
+    // 取消上一个在途请求 —— 这也是 S-1 那个 bug 的引爆点，所以取消路径必须
+    // 一路保持 CancellationException、不被吞。
+    LaunchedEffect(docs) {
+        snapshotFlow { keyword.trim() }
+            .debounce(300)
+            .distinctUntilChanged()
+            .collectLatest { q ->
+                if (q.isEmpty()) docs.clearSearch() else docs.search(q)
+            }
     }
 
     TabPage {
@@ -167,18 +173,46 @@ fun SearchScreen(
                 title = { it.label },
             )
 
-            if (keyword.isBlank()) {
-                SearchSuggestions(
+            when {
+                keyword.isBlank() -> SearchSuggestions(
                     onSelectWord = { keyword = it },
                     modifier = Modifier.fillMaxSize(),
                 )
-            } else if (results.isEmpty && isSearching) {
-                LoadingView(topPadding = 80.dp)
-            } else if (results.isEmpty) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+
+                // 失败与「搜不到」必须分开：前者给可重试的错误态，后者给空态。
+                // 之前两者都静默回退到本地假数据，用户根本分不清是网断了还是没命中。
+                result.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                    EmptyStateView(
+                        title = "搜索失败",
+                        description = "${result.error}\n检查网络后再试一次。",
+                        icon = {
+                            Icon(
+                                imageVector = SeuIcons.Search,
+                                contentDescription = null,
+                                tint = SeuTheme.colors.tertiaryLabel,
+                                modifier = Modifier.size(40.dp),
+                            )
+                        },
+                    )
+                    Text(
+                        text = "重试",
+                        style = SeuType.SubheadlineSemibold,
+                        color = SeuTheme.colors.accent,
+                        modifier = Modifier
+                            .padding(top = 260.dp)
+                            .clip(CircleShape)
+                            .clickable { searchScope.launch { docs.search(keyword.trim()) } }
+                            .padding(horizontal = 20.dp, vertical = 14.dp),
+                    )
+                }
+
+                result.loading && result.total == 0 -> LoadingView(topPadding = 80.dp)
+
+                // 「搜过、没报错、0 命中」——这是真正的空结果。
+                results.isEmpty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
                         title = "未找到“$keyword”",
-                        description = null,
+                        description = "换个关键词试试，试试「保研」「转专业」这类词。",
                         icon = {
                             Icon(
                                 imageVector = SeuIcons.Search,
@@ -189,23 +223,21 @@ fun SearchScreen(
                         },
                     )
                 }
-            } else if (scope == SearchScope.All) {
-                AggregatedResults(
+
+                scope == SearchScope.All -> AggregatedResults(
                     results = results,
                     keyword = keyword,
                     onOpenFeed = onOpenFeed,
-                    onOpenPost = onOpenPost,
-                    onOpenHandbookEntry = onOpenHandbookEntry,
+                    onOpenEntry = onOpenEntry,
                     onOpenSourceList = onOpenSourceList,
                 )
-            } else {
-                SourceList(
+
+                else -> SourceList(
                     scope = scope,
                     results = results,
                     keyword = keyword,
                     onOpenFeed = onOpenFeed,
-                    onOpenPost = onOpenPost,
-                    onOpenHandbookEntry = onOpenHandbookEntry,
+                    onOpenEntry = onOpenEntry,
                 )
             }
         }
@@ -213,37 +245,6 @@ fun SearchScreen(
 }
 
 // --- query -----------------------------------------------------------------
-
-/**
- * Runs the query against all three sources.
- *
- * 「通知」 hits the live `pool` search in the SwiftUI build; here it falls back
- * to the same local match so the aggregation behaves identically offline.
- */
-private fun search(rawKeyword: String, feed: List<FeedItem>? = null): SearchResults {
-    val keyword = rawKeyword.trim()
-    if (keyword.isEmpty()) return SearchResults(keyword, emptyList(), emptyList(), emptyList())
-    return SearchResults(
-        keyword = keyword,
-        feed = feed ?: MockData.feedItems.filter { it.matches(keyword) },
-        forum = MockData.forumPosts.filter { it.matches(keyword) },
-        handbook = MockData.handbookSections
-            .flatMap { it.entries }
-            .filter { it.matches(keyword) },
-    )
-}
-
-private fun contains(text: String, keyword: String): Boolean =
-    text.contains(keyword, ignoreCase = true)
-
-private fun FeedItem.matches(keyword: String) =
-    contains(title, keyword) || contains(summary, keyword)
-
-private fun ForumPost.matches(keyword: String) =
-    contains(title, keyword) || contains(excerpt, keyword)
-
-private fun HandbookEntry.matches(keyword: String) =
-    contains(title, keyword) || contains(subtitle, keyword) || contains(body, keyword)
 
 /**
  * Bolds every occurrence of [keyword] in [text] — the `String.highlighting(_:)`
@@ -417,8 +418,7 @@ private fun AggregatedResults(
     results: SearchResults,
     keyword: String,
     onOpenFeed: (String) -> Unit,
-    onOpenPost: (String) -> Unit,
-    onOpenHandbookEntry: (String) -> Unit,
+    onOpenEntry: (String) -> Unit,
     onOpenSourceList: (SearchScope, String) -> Unit,
 ) {
     LazyColumn(
@@ -439,16 +439,16 @@ private fun AggregatedResults(
                 }
             }
         }
-        if (results.forum.isNotEmpty()) {
+        if (results.experience.isNotEmpty()) {
             item {
                 SearchSectionCard(
                     scope = SearchScope.Forum,
-                    count = results.forum.size,
+                    count = results.experience.size,
                     onMore = { onOpenSourceList(SearchScope.Forum, keyword) },
                 ) {
-                    results.forum.take(3).forEachIndexed { index, post ->
-                        SearchForumResultRow(post, keyword) { onOpenPost(post.id) }
-                        if (index < minOf(3, results.forum.size) - 1) InsetDivider()
+                    results.experience.take(3).forEachIndexed { index, doc ->
+                        SearchDocResultRow(doc, DocKind.Experience, keyword) { onOpenEntry(doc.slug) }
+                        if (index < minOf(3, results.experience.size) - 1) InsetDivider()
                     }
                 }
             }
@@ -460,8 +460,8 @@ private fun AggregatedResults(
                     count = results.handbook.size,
                     onMore = { onOpenSourceList(SearchScope.Handbook, keyword) },
                 ) {
-                    results.handbook.take(3).forEachIndexed { index, entry ->
-                        SearchHandbookResultRow(entry, keyword) { onOpenHandbookEntry(entry.id) }
+                    results.handbook.take(3).forEachIndexed { index, doc ->
+                        SearchDocResultRow(doc, DocKind.Survival, keyword) { onOpenEntry(doc.slug) }
                         if (index < minOf(3, results.handbook.size) - 1) InsetDivider()
                     }
                 }
@@ -471,7 +471,14 @@ private fun AggregatedResults(
 }
 
 /**
- * A single-source result list, shown when a scope other than 全部 is selected.
+ * 单信源结果列表（选中「通知」/「经验」/「手册」之后）。
+ *
+ * **每一行都必须可点并跳到对应详情**（A-1）。原实现里 `CardColumn` 没挂
+ * `onClick`，传进来的 `onOpenFeed` / `onOpenPost` / `onOpenHandbookEntry`
+ * 三个回调**一个都没被用上** —— 表现为「搜索结果点不动」：列表有内容、
+ * 看着像能进，点了毫无反应。
+ *
+ * 现在三路各自接上自己的回调，并补上关键词高亮（原来这里也没高亮）。
  */
 @Composable
 private fun SourceList(
@@ -479,72 +486,23 @@ private fun SourceList(
     results: SearchResults,
     keyword: String,
     onOpenFeed: (String) -> Unit,
-    onOpenPost: (String) -> Unit,
-    onOpenHandbookEntry: (String) -> Unit,
+    onOpenEntry: (String) -> Unit,
 ) {
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = ListBottomPadding),
-        verticalArrangement = Arrangement.spacedBy(0.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         when (scope) {
             SearchScope.Feed -> items(results.feed, key = { it.id }) { item ->
-                CardColumn(padding = 14.dp) {
-                    Text(
-                        text = item.title,
-                        style = SeuType.SubheadlineMedium,
-                        color = SeuTheme.colors.label,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "${item.sourceName} · ${item.summary}",
-                        style = SeuType.Caption,
-                        color = SeuTheme.colors.secondaryLabel,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
+                SearchFeedResultRow(item, keyword) { onOpenFeed(item.id) }
             }
 
-            SearchScope.Forum -> items(results.forum, key = { it.id }) { post ->
-                CardColumn(padding = 14.dp) {
-                    Text(
-                        text = post.title,
-                        style = SeuType.SubheadlineMedium,
-                        color = SeuTheme.colors.label,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "${post.authorName} · ${post.excerpt}",
-                        style = SeuType.Caption,
-                        color = SeuTheme.colors.secondaryLabel,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
+            SearchScope.Forum -> items(results.experience, key = { it.slug }) { doc ->
+                SearchDocResultRow(doc, DocKind.Experience, keyword) { onOpenEntry(doc.slug) }
             }
 
-            SearchScope.Handbook -> items(results.handbook, key = { it.id }) { entry ->
-                CardColumn(padding = 14.dp) {
-                    Text(
-                        text = entry.title,
-                        style = SeuType.SubheadlineMedium,
-                        color = SeuTheme.colors.label,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        text = "${sectionNameOf(entry)} · ${entry.subtitle}",
-                        style = SeuType.Caption,
-                        color = SeuTheme.colors.secondaryLabel,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
+            SearchScope.Handbook -> items(results.handbook, key = { it.slug }) { doc ->
+                SearchDocResultRow(doc, DocKind.Survival, keyword) { onOpenEntry(doc.slug) }
             }
 
             SearchScope.All -> Unit
@@ -552,12 +510,6 @@ private fun SourceList(
     }
 }
 
-/**
- * One source's section card.
- *
- * Port of `SearchSectionCard`: a 30dp tinted well with the source name and hit
- * count, a hairline, up to three rows, then a full-width 查看更多 link.
- */
 @Composable
 private fun SearchSectionCard(
     scope: SearchScope,
@@ -653,94 +605,70 @@ private fun SearchFeedResultRow(item: FeedItem, keyword: String, onClick: () -> 
     }
 }
 
+/**
+ * 手册 / 经验结果行。两者字段一致，只有图标与配色不同。
+ *
+ * 命中正文小节时（`pool` 的 `docs[].anchor` 非空）在标题下补一行锚点提示，
+ * 让用户知道点进去会落到哪一节，而不是整篇从头看。
+ */
 @Composable
-private fun SearchForumResultRow(post: ForumPost, keyword: String, onClick: () -> Unit) {
+private fun SearchDocResultRow(
+    doc: DocRef,
+    kind: DocKind,
+    keyword: String,
+    onClick: () -> Unit,
+) {
     val colors = SeuTheme.colors
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(14.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        IconWell(tint = colors.orange) {
-            Icon(
-                imageVector = SeuIcons.of("bubble.left.and.text.bubble.right.fill"),
-                contentDescription = null,
-                tint = colors.orange,
-                modifier = Modifier.size(17.dp),
-            )
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(
-                text = highlightMatches(post.title, keyword),
-                style = SeuType.SubheadlineMedium,
-                color = colors.label,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "${post.authorName} · ${post.excerpt}",
-                style = SeuType.Caption,
-                color = colors.secondaryLabel,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SearchHandbookResultRow(entry: HandbookEntry, keyword: String, onClick: () -> Unit) {
-    val colors = SeuTheme.colors
-    // Prefer the subtitle; fall back to the body when only the body matched, so
-    // the highlighted keyword is always visible — the same rule as SwiftUI.
-    val snippet = if (keyword.isNotBlank() &&
-        !entry.title.contains(keyword, ignoreCase = true) &&
-        !entry.subtitle.contains(keyword, ignoreCase = true) &&
-        entry.body.contains(keyword, ignoreCase = true)
-    ) {
-        entry.body
+    val tint = if (kind == DocKind.Experience) colors.orange else colors.green
+    val symbol = if (kind == DocKind.Experience) {
+        "bubble.left.and.text.bubble.right.fill"
     } else {
-        entry.subtitle
+        "book.closed.fill"
     }
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .cardStyle(padding = 14.dp)
+            .clip(CircleShape)
             .clickable(onClick = onClick)
-            .padding(14.dp),
+            .padding(0.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
     ) {
-        IconWell(tint = colors.green) {
+        IconWell(tint = tint) {
             Icon(
-                imageVector = SeuIcons.of("book.closed"),
+                imageVector = SeuIcons.of(symbol),
                 contentDescription = null,
-                tint = colors.green,
+                tint = tint,
                 modifier = Modifier.size(17.dp),
             )
         }
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
-                text = highlightMatches(entry.title, keyword),
+                text = highlightMatches(doc.title, keyword),
                 style = SeuType.SubheadlineMedium,
                 color = colors.label,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = snippet,
-                style = SeuType.Caption,
-                color = colors.secondaryLabel,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            doc.anchor?.let {
+                Text(
+                    text = "命中本节：${highlightMatches(it.text.trim(), keyword)}",
+                    style = SeuType.Caption,
+                    color = colors.accent,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            doc.description?.let {
+                Text(
+                    text = highlightMatches(it, keyword),
+                    style = SeuType.Caption,
+                    color = colors.secondaryLabel,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
-
-/** Which handbook section an entry belongs to, for the single-source list subtitle. */
-private fun sectionNameOf(entry: HandbookEntry): String =
-    MockData.handbookSections
-        .firstOrNull { section -> section.entries.any { it.id == entry.id } }
-        ?.name
-        .orEmpty()

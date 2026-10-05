@@ -57,7 +57,7 @@ import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.Course
-import tech.iflink.seuwiki.models.MockData
+import tech.iflink.seuwiki.models.ToolCatalog
 import tech.iflink.seuwiki.ui.DetailHeader
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.EmptyStateView
@@ -776,7 +776,7 @@ fun ToolPlaceholderScreen(
     toolId: String,
     onBack: () -> Unit,
 ) {
-    val tool = remember(toolId) { MockData.tools.firstOrNull { it.id == toolId } }
+    val tool = remember(toolId) { ToolCatalog.tools.firstOrNull { it.id == toolId } }
 
     TabPage {
         Column(Modifier.fillMaxSize()) {

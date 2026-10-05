@@ -5,12 +5,17 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
@@ -18,10 +23,8 @@ import androidx.compose.ui.unit.dp
 import tech.iflink.seuwiki.design.CardColumn
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
+import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.models.FeedItem
-import tech.iflink.seuwiki.models.ForumPost
-import tech.iflink.seuwiki.models.HandbookEntry
-import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.DetailHeader
 import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.Format
@@ -54,23 +57,26 @@ fun HomeFeedListScreen(
 }
 
 /**
- * 论坛新帖 · 完整列表.
+ * 经验长文 · 完整列表。
  *
- * Port of `HomeForumListView`: the 「查看全部」 destination for the Home forum
- * section, same compact two-line list shape as the feed list.
+ * 主页那一栏原来叫「论坛新帖」，内容是 `MockData.forumPosts` —— 虚构作者、
+ * 虚构互动数。社区接不通之后，这一栏改为展示**真实的经验长文**
+ * （`GET /api/site/docs/experience`），点进去就是对应的正文详情。
  */
 @Composable
-fun HomeForumListScreen(
-    posts: List<ForumPost>,
+fun HomeExperienceListScreen(
+    docs: DocsStore,
     onBack: () -> Unit,
-    onOpenPost: (String) -> Unit,
+    onOpenEntry: (String) -> Unit,
 ) {
-    DetailListPage(title = "论坛新帖", onBack = onBack) {
-        items(posts, key = { it.id }) { post ->
+    LaunchedEffect(Unit) { docs.loadExperience() }
+    DetailListPage(title = "经验长文", onBack = onBack) {
+        items(docs.experience, key = { it.slug }) { entry ->
             CompactListRow(
-                title = post.title,
-                meta = "${post.authorName} · ${Format.relative(post.createdAt)}",
-                onClick = { onOpenPost(post.id) },
+                title = entry.title,
+                meta = listOfNotNull(entry.part, entry.category, entry.author)
+                    .take(2).joinToString(" · ").ifEmpty { "经验长文" },
+                onClick = { onOpenEntry(entry.slug) },
             )
         }
     }
@@ -89,28 +95,40 @@ fun HomeForumListScreen(
  */
 @Composable
 fun SearchSourceListScreen(
+    docs: DocsStore,
     scope: String,
     keyword: String,
     onBack: () -> Unit,
     onOpenFeed: (String) -> Unit,
-    onOpenPost: (String) -> Unit,
     onOpenEntry: (String) -> Unit,
 ) {
     val key = keyword.trim()
-    val hits = remember(scope, key) { searchScope(scope, key) }
-    if (hits == null) {
+    var error by remember(key) { mutableStateOf<String?>(null) }
+
+    // 结果直接取自 `GET /api/site/pool`：这一次请求同时给了资讯 items 与
+    // 手册/经验 docs，三信源按 label 分流，不再本地匹配假数据。
+    // 关键词已经是路由参数（A-9 修好了编码），这里不再二次编码。
+    LaunchedEffect(key) {
+        if (key.isEmpty()) return@LaunchedEffect
+        runCatching { docs.search(key) }
+            .onSuccess { error = null }
+            .onFailure { error = it.message ?: "网络异常" }
+    }
+
+    if (error != null) {
         TabPage {
             Column(Modifier.fillMaxSize()) {
                 DetailHeader(title = scope, onBack = onBack)
-                EmptyStateView(title = "未知搜索范围")
+                EmptyStateView(title = "搜索失败", description = error)
             }
         }
         return
     }
 
+    val result = docs.searchResult
     DetailListPage(title = scope, onBack = onBack) {
-        when (hits) {
-            is ScopeHits.Feed -> items(hits.items, key = { it.id }) { item ->
+        when (scope) {
+            "通知" -> items(result.feed, key = { it.id }) { item ->
                 CompactListRow(
                     title = item.title,
                     meta = "${item.sourceName} · ${item.summary}",
@@ -119,25 +137,33 @@ fun SearchSourceListScreen(
                 )
             }
 
-            is ScopeHits.Forum -> items(hits.items, key = { it.id }) { post ->
+            "经验" -> items(result.experience, key = { it.slug }) { doc ->
                 CompactListRow(
-                    title = post.title,
-                    meta = "${post.authorName} · ${post.excerpt}",
+                    title = doc.title,
+                    meta = doc.anchor?.let { "命中本节：${it.text.trim()}" } ?: doc.description.orEmpty(),
                     keyword = key,
-                    onClick = { onOpenPost(post.id) },
+                    onClick = { onOpenEntry(doc.slug) },
                 )
             }
 
-            is ScopeHits.Handbook -> items(hits.items, key = { it.id }) { entry ->
+            "手册" -> items(result.handbook, key = { it.slug }) { doc ->
                 CompactListRow(
-                    title = entry.title,
-                    meta = handbookSnippet(entry, key),
+                    title = doc.title,
+                    meta = doc.anchor?.let { "命中本节：${it.text.trim()}" } ?: doc.description.orEmpty(),
                     keyword = key,
-                    onClick = { onOpenEntry(entry.id) },
+                    onClick = { onOpenEntry(doc.slug) },
                 )
             }
 
-            ScopeHits.Blank -> Unit
+            else -> item {
+                Column(Modifier.fillMaxWidth().padding(top = 48.dp)) {
+                    Text(
+                        text = "未知搜索范围：$scope",
+                        style = SeuType.Subheadline,
+                        color = SeuTheme.colors.secondaryLabel,
+                    )
+                }
+            }
         }
     }
 }
@@ -209,76 +235,3 @@ private fun CompactListRow(
         )
     }
 }
-
-// --- query -----------------------------------------------------------------
-
-/** One scope's hits, kept per source so each renders the meta line the iOS page pairs with it. */
-private sealed interface ScopeHits {
-
-    data class Feed(val items: List<FeedItem>) : ScopeHits
-
-    data class Forum(val items: List<ForumPost>) : ScopeHits
-
-    data class Handbook(val items: List<HandbookEntry>) : ScopeHits
-
-    /** A blank keyword: the Swift `SearchStore` clears every bucket rather than matching all. */
-    data object Blank : ScopeHits
-}
-
-/**
- * Runs the query against one source.
- *
- * 「通知」 hits the live `pool` search in the SwiftUI build, falling back to
- * this local match when the request fails; 「经验」 and 「手册」 are local
- * providers outright. All three are offline here, so the fallback is all we
- * have — the same behaviour the Android search screen already ships.
- *
- * Returns null when [scope] names no source.
- */
-private fun searchScope(scope: String, keyword: String): ScopeHits? {
-    if (keyword.isEmpty()) return ScopeHits.Blank
-    return when (scope) {
-        "通知" -> ScopeHits.Feed(
-            MockData.feedItems.filter {
-                matches(it.title, keyword) || matches(it.summary, keyword)
-            },
-        )
-
-        "经验" -> ScopeHits.Forum(
-            MockData.forumPosts.filter {
-                matches(it.title, keyword) || matches(it.excerpt, keyword)
-            },
-        )
-
-        "手册" -> ScopeHits.Handbook(
-            MockData.handbookSections.flatMap { it.entries }.filter {
-                matches(it.title, keyword) ||
-                    matches(it.subtitle, keyword) ||
-                    matches(it.body, keyword)
-            },
-        )
-
-        else -> null
-    }
-}
-
-/** `SearchEngine.matches`: case-insensitive containment. */
-private fun matches(text: String, keyword: String): Boolean =
-    text.contains(keyword, ignoreCase = true)
-
-/**
- * The handbook meta line.
- *
- * Port of `SearchHandbookRow.snippet`: prefer the subtitle, and fall back to the
- * body when only the body matched, so the hit is visible on the row.
- */
-private fun handbookSnippet(entry: HandbookEntry, keyword: String): String =
-    if (keyword.isNotEmpty() &&
-        !matches(entry.title, keyword) &&
-        !matches(entry.subtitle, keyword) &&
-        matches(entry.body, keyword)
-    ) {
-        entry.body
-    } else {
-        entry.subtitle
-    }

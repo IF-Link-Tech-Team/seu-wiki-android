@@ -70,7 +70,6 @@ import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.CampusReminder
 import tech.iflink.seuwiki.models.FeedCategory
 import tech.iflink.seuwiki.models.FeedItem
-import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.DetailHeader
 import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.Format
@@ -98,7 +97,11 @@ fun FeedItemDetailScreen(
 ) {
     // 路由只带 id；条目从 Store 已加载的列表状态里反查，查不到时下面的 detail
     // 请求会补出标题/摘要，够冷启动或深链进入时渲染。
-    val listed = remember(itemId) { store.findItem(itemId) ?: MockData.feedItems.firstOrNull { it.id == itemId } }
+    // 路由只带 id；条目从 Store 已加载的列表状态里反查。
+    // 原来查不到时会回退 MockData 里那条假数据，于是深链进一个不存在的 id
+    // 也能渲染出一篇看起来很真的通知 —— 那是在骗用户。
+    // 现在查不到就是 null，由下面的 detail 请求补出真实内容；再查不到就显示未找到。
+    val listed = remember(itemId) { store.findItem(itemId) }
     var detail by remember(itemId) { mutableStateOf<RemoteFeedDetail?>(null) }
     var isLoadingDetail by remember(itemId) { mutableStateOf(false) }
 
