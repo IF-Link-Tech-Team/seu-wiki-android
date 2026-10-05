@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      深色模式专用主题。
+
+      之前**没有** values-night 版本：明暗两套都指向
+      `android:Theme.Material.Light.NoActionBar`，且 windowLightStatusBar 恒为 true。
+      于是切到深色后 `grouped_background` 已经是纯黑，状态栏图标却仍是黑色
+      —— 冷启动那一刻尤其明显：状态栏时间/电量看不见。
+
+      这里改用 Material 的夜间父主题，并把 windowLight* 两个开关都置 false
+      （系统据此改用浅色图标），避免图标与深色背景同色。
+    -->
+    <style name="Theme.SEUWiki" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowBackground">@color/grouped_background</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

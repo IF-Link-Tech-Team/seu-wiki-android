@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      OIDC 回调落点专用（A-5）：本 Activity 不渲染任何 UI，只在浏览器与 App 之间
+      做一次无声的中转。透明主题避免从 Custom Tab 切进来时先闪一下白底/黑底 ——
+      国产 ROM 上这个「闪白」很容易被当成页面卡死。
+    -->
+    <style name="Theme.SEUWiki.Transparent" parent="Theme.SEUWiki">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
+</resources>

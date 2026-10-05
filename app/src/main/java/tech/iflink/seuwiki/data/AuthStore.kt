@@ -1,6 +1,7 @@
 package tech.iflink.seuwiki.data
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.verify.domain.DomainVerificationManager
 import android.net.Uri
 import android.os.Build
@@ -15,7 +16,14 @@ import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.Base64
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
@@ -51,9 +59,45 @@ class AuthStore private constructor(
     private val config: AuthConfig,
 ) {
 
-    private val prefs = appContext.getSharedPreferences("seu_wiki_auth", Context.MODE_PRIVATE)
+    private val prefs: SharedPreferences = SecurePrefs.open(appContext)
     private val json = Json { ignoreUnknownKeys = true }
     private val http = HttpJson()
+
+    /**
+     * 续期互斥锁：保证同一时刻只有一次 refresh 在途。
+     *
+     * Logto 对 public client 开了 **Rotate refresh token** —— 每次用旧 refresh token
+     * 换 access token 都会作废旧的、签发一个新的。于是两个并发续期（资讯列表正在
+     * loadMore、搜索页又在请求）里，**后到的那个必然拿到 400 invalid_grant**，
+     * 按 S-1 的规则那就是该登出 —— 用户只是在正常刷列表却被登出了。
+     * 合并并发续期后，这个窗口根本不会出现。
+     */
+    private val refreshMutex = Mutex()
+
+    /**
+     * 会话代号。每次真正建立或清空会话（登录成功 / 登出）自增。
+     *
+     * 续期是**异步**的：用户在续期在途时点了退出，`logout()` 清空会话并把代号 +1；
+     * 稍后那次续期才返回，若不管它，它会拿着自己那份**过期的** [Session] 把 token
+     * `persist` 回去并赋值给 [session]，用户明明点了退出却又被「复活」。
+     * 写回前比对代号，不一致就整份丢弃。
+     */
+    private val sessionGeneration = AtomicLong(0)
+
+    /**
+     * **应用级**协程域：OIDC 回调的换 token 挂在它上面。
+     *
+     * 之前换 token 跑在 `AuthCallbackActivity` 的 `lifecycleScope` 里，而那个
+     * Activity 又是 `noHistory` 的。用户切出去看一眼短信验证码再切回来，
+     * Activity 已被销毁 → 协程被取消 → 但 code 是**一次性**的、PKCE 材料也已在
+     * 开始处理时就清掉了，用户回到 App 只看到「登录会话已失效」。
+     *
+     * AuthStore 本身是应用级单例，它的生命周期比任何 Activity 都长，
+     * 所以换 token 的过程挂在这里最合适：Activity 随便被销毁都不影响它跑完。
+     * `SupervisorJob` 保证一次回调失败不会连累后续回调。
+     */
+    val callbackScope: CoroutineScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     /** 登录态。`null` 表示从未登录或已登出。 */
     data class Session(
@@ -87,26 +131,15 @@ class AuthStore private constructor(
     // MARK: - Public API
 
     /**
-     * 是否已经向 Logto 取得过「离线访问」授权（即拿到过 refresh token）。
+     * 是否需要在下一次授权时**强制重新登录**（登出后置位，登录成功即清）。
      *
-     * OIDC Core §6 规定：请求里带 `offline_access` 时 `prompt` 必须同时带 `consent`，
-     * 否则授权服务器**必须忽略** `offline_access`。Logto 严格执行这条 —— 早期只发了
-     * `offline_access` 而漏了 `prompt=consent`，token 响应里就**没有 `refresh_token`**，
-     * 而 `email` / `roles` 一切正常，极难察觉。后果是 access token 一小时后过期，
-     * [accessToken] 拿不到 refresh token 只能 [logout]，表现为「用着用着被静默登出」。
-     *
-     * 首次登录补上 `prompt=consent`，Logto 弹一次授权页并把 `offline_access` 记进
-     * 该用户对本应用的 grant；之后按 OIDC Core 的「其他已满足条件」直接复用该 grant，
-     * 不必每次登录都弹授权页。故此标志只置位、登出时也保留，
-     * 仅在续期被拒（grant 可能已在服务端失效）时清掉，让下一次登录重新征求同意。
-     *
-     * 这条不只是为了「能续期」：Logto 文档写明，若授权请求里没有 `offline_access`，
-     * 签发出的 refresh token 会被绑定到 user session（固定 14 天 TTL），
-     * session 一过期 token 就作废，控制台的 refresh token TTL 设置形同虚设。
+     * 对应 S-7：只清本地会话的话，浏览器里的 Logto SSO cookie 还在，有效期长于
+     * refresh token 的 14 天。用户退出后重新点登录，浏览器发现会话仍然有效，
+     * **静默地**直接签发新 code 回到原账号 —— 于是「换个账号登录」根本做不到，
+     * 界面上表现为退出登录后一登录又变回自己。
      */
-    private var offlineAccessGranted: Boolean
-        get() = prefs.getBoolean(KEY_OFFLINE_GRANTED, false)
-        set(value) = prefs.edit().putBoolean(KEY_OFFLINE_GRANTED, value).apply()
+    private val forceReauth: Boolean
+        get() = prefs.getBoolean(KEY_FORCE_REAUTH, false)
 
     /**
      * 拼出授权 URL 并返回需要保留的 PKCE verifier / state。
@@ -123,6 +156,16 @@ class AuthStore private constructor(
         val challenge = base64Url(sha256(verifier.toByteArray(Charsets.US_ASCII)))
         val state = randomUrlSafe(16)
         val redirectUri = resolveRedirectUri()
+        // prompt 的取值：
+        // - 恒定带 consent —— 没有它 Logto 按 OIDC Core §6 会忽略 offline_access、
+        //   不签发 refresh token，access token 一小时后过期就没法续了；
+        // - 登出后再登录额外带 login —— 让浏览器不要拿还在的 SSO 会话静默签发 code。
+        // 多个 prompt 值按空格分隔，符合 OIDC Core §3.1.2.1。
+        // first-party 应用带上 consent 不会重复弹授权页。
+        val prompts = buildList {
+            add("consent")
+            if (forceReauth) add("login")
+        }
         val url = buildString {
             append(config.authorizationEndpoint)
             append("?client_id=").append(enc(config.clientId))
@@ -132,14 +175,13 @@ class AuthStore private constructor(
             append("&state=").append(enc(state))
             append("&code_challenge=").append(enc(challenge))
             append("&code_challenge_method=S256")
-            // 只在还没拿到过离线授权时补 prompt=consent，见 [offlineAccessGranted]。
-            if (!offlineAccessGranted) append("&prompt=consent")
+            append("&prompt=").append(prompts.joinToString(" "))
             // resource 让 Logto 签发面向本 API 的 JWT；opaque token 也能用，故可空。
             config.resource?.let { append("&resource=").append(enc(it)) }
         }
         Log.i(
             "AuthStore",
-            "本次登录 redirect_uri=$redirectUri，App Link 已校验=${isAppLinkVerified()}",
+            "本次登录 redirect_uri=$redirectUri，prompt=$prompts，App Link 已校验=${isAppLinkVerified()}",
         )
         return AuthorizationRequest(url = url, verifier = verifier, state = state, redirectUri = redirectUri)
     }
@@ -185,8 +227,6 @@ class AuthStore private constructor(
             clearPending()
 
             val token = exchangeCode(code, pending.verifier, pending.redirectUri)
-            // 拿到 refresh token 即说明 Logto 认可了 offline_access，之后不必再弹授权页。
-            if (token.refreshToken != null) offlineAccessGranted = true
             val userInfo = fetchUserInfo(token.accessToken)
             val newSession = Session(
                 accessToken = token.accessToken,
@@ -199,9 +239,19 @@ class AuthStore private constructor(
                 email = userInfo.email,
                 avatarUrl = userInfo.avatarUrl,
             )
+            // 登录成功：换代（让在途续期作废）并撤销「必须重新登录」的标记。
+            sessionGeneration.incrementAndGet()
             persist(newSession)
+            prefs.edit().putBoolean(KEY_FORCE_REAUTH, false).apply()
             session = newSession
+            if (token.refreshToken == null) {
+                // 不该发生（授权恒定带 prompt=consent）。真发生说明服务端没签发，
+                // access token 一小时后过期就无法续期，提前告知比一小时后静默登出好。
+                Log.w("AuthStore", "登录成功但未拿到 refresh token，续期能力缺失")
+            }
             return true
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             lastError = "登录失败：${e.message ?: e::class.java.simpleName}"
             return false
@@ -213,43 +263,83 @@ class AuthStore private constructor(
     /**
      * 取一个可用的 access token，必要时用 refresh token 换新的。
      *
-     * [FeedApiClient] 每次请求前调它，登录态下就自动带上新鲜凭证；
-     * 刷新失败说明会话已失效，清本地登录态并返回 null（回到匿名请求）。
+     * **只有** token 端点明确回复「这个 refresh token 不能再用了」时才清会话：
+     * HTTP 400 且 body 里是 `invalid_grant`，或 HTTP 401。其余一切失败
+     * （超时、断网、5xx、JSON 解析失败、被上层取消）都**保留**登录态，
+     * 本次请求按匿名发出。
+     *
+     * 这条边界很重要：之前这里是 `catch (_: Exception) { logout() }`，把
+     * `CancellationException` 也一起吞了。而搜索框每敲一个字 `LaunchedEffect(query)`
+     * 就会取消上一个在途请求 —— 用户正常打字就能被静默登出。取消更是**不能**登出的：
+     * 它只说明「没人再要这个结果了」，和会话是否还有效毫无关系。
+     *
+     * 并发续期由 [refreshMutex] 合并；返回前还会比对 [sessionGeneration]，
+     * 避免续期在途时用户登出、结果又把会话写回来。
      */
     suspend fun accessToken(): String? {
         val current = session ?: return null
         if (current.expiresAt - System.currentTimeMillis() > EXPIRY_SKEW_MS) {
             return current.accessToken
         }
+        // 没有 refresh token 就永远续不了期，属于真实的死路，只能登出。
+        // 正常情况下不该出现：授权请求恒定带 prompt=consent（见 [buildAuthorizationRequest]），
+        // Logto 一定会签发 refresh_token。真出现了说明服务端策略变了，登出让用户重来一次。
         val refresh = current.refreshToken ?: run {
+            Log.w("AuthStore", "会话没有 refresh token，无法续期，改为登出")
             logout()
             return null
         }
-        return try {
-            val form = mapOf(
-                "grant_type" to "refresh_token",
-                "refresh_token" to refresh,
-                "client_id" to config.clientId,
-            ) + resourceParam()
-            val body = http.postForm(config.tokenEndpoint, form)
-            val token = TokenResponse.from(json.parseToJsonElement(body).jsonObject)
-            val renewed = current.copy(
-                accessToken = token.accessToken,
-                // Logto 文档：public client（Native/SPA）开启 Rotate refresh token 后，
-                // 每次用 refresh token 换 access token 一定会签发新的 refresh token，
-                // 所以这里 `?: refresh` 只是兜底，不是常态。
-                refreshToken = token.refreshToken ?: refresh,
-                expiresAt = System.currentTimeMillis() + token.expiresInMillis,
-            )
-            persist(renewed)
-            session = renewed
-            renewed.accessToken
-        } catch (_: Exception) {
-            logout()
-            // grant 可能已在服务端失效（超过 14 天 TTL、密码重置、管理员清理授权）：
-            // 连同「已授权」标志一起清掉，下一次登录会重新弹授权页并取回 refresh token。
-            offlineAccessGranted = false
-            null
+
+        return refreshMutex.withLock {
+            // 双重检查：等锁期间可能已经有别的协程续好了，也可能用户已经登出。
+            val latest = session
+            if (latest == null) return@withLock null
+            if (latest.expiresAt - System.currentTimeMillis() > EXPIRY_SKEW_MS) {
+                return@withLock latest.accessToken
+            }
+            val generationAtStart = sessionGeneration.get()
+
+            try {
+                val form: Map<String, String> = mapOf(
+                    "grant_type" to "refresh_token",
+                    "refresh_token" to (latest.refreshToken ?: refresh),
+                    "client_id" to config.clientId,
+                ) + resourceParam()
+                val body = http.postForm(config.tokenEndpoint, form)
+                val token = TokenResponse.from(json.parseToJsonElement(body).jsonObject)
+                val renewed = latest.copy(
+                    accessToken = token.accessToken,
+                    // Logto 文档：public client（Native/SPA）开启 Rotate refresh token 后，
+                    // 每次用 refresh token 换 access token 一定会签发新的 refresh token，
+                    // 所以这里 `?: refresh` 只是兜底，不是常态。
+                    refreshToken = token.refreshToken ?: latest.refreshToken ?: refresh,
+                    expiresAt = System.currentTimeMillis() + token.expiresInMillis,
+                )
+                // 用户可能在续期在途时登出过：代号变了就别写回，否则会话被复活。
+                if (sessionGeneration.get() != generationAtStart) {
+                    Log.i("AuthStore", "续期返回时会话已变更（疑似已登出），丢弃本次结果")
+                    return@withLock null
+                }
+                persist(renewed)
+                session = renewed
+                renewed.accessToken
+            } catch (e: CancellationException) {
+                // 取消不是「会话失效」，绝不能顺手登出。
+                throw e
+            } catch (e: HttpStatusException) {
+                if (e.invalidatesGrant) {
+                    Log.w("AuthStore", "refresh token 已被服务端拒绝（HTTP ${e.status}），清会话")
+                    logout()
+                } else {
+                    // 5xx / 429 这类服务端故障，refresh token 大概率还是好的。
+                    Log.w("AuthStore", "续期失败但 grant 可能仍有效（HTTP ${e.status}），保留登录态")
+                }
+                null
+            } catch (e: Exception) {
+                // 断网、超时、解析失败：保留登录态，本次匿名请求。
+                Log.w("AuthStore", "续期遇到非致命错误（${e::class.java.simpleName}），保留登录态")
+                null
+            }
         }
     }
 
@@ -259,15 +349,44 @@ class AuthStore private constructor(
     }
 
     /**
-     * 本地登出：清 token 与资料。
+     * 退出登录：**本地立刻清干净**，并异步吊销服务端的 refresh token。
      *
-     * 保留 [KEY_OFFLINE_GRANTED]：consent 是「用户对本应用的一次性许可」，
-     * 登出不代表收回它 —— 否则每次重新登录都要再看一遍授权页。
+     * 只清本地是不够的。refresh token 在 Logto 侧还有最长 14 天有效期，
+     * 浏览器里的 SSO cookie 也还在 —— 用户重新点登录时浏览器发现会话仍有效，
+     * 会**静默地**直接签发新 code 返回原账号，结果是「换个账号」根本做不到。
+     * 所以这里按 RFC 7009 吊销 refresh token（吊销会连带结束该 SSO 会话），
+     * 并置位 [forceReauth]，让下一次授权额外带 `prompt=login`。
+     *
+     * 吊销是**尽力而为**：它失败不影响本地已经清干净的登录态，用户照样登出成功。
+     * 放在后台发出去、不阻塞 UI。
      */
     fun logout() {
+        val refresh = session?.refreshToken
         clearSession()
         session = null
         lastError = null
+        // 代号 +1：让此刻仍在途的续期在写回前发现「会话已变」并丢弃结果。
+        sessionGeneration.incrementAndGet()
+        prefs.edit().putBoolean(KEY_FORCE_REAUTH, true).apply()
+
+        if (!refresh.isNullOrBlank()) {
+            callbackScope.launch(Dispatchers.IO) {
+                runCatching {
+                    http.postForm(
+                        config.revocationEndpoint,
+                        mapOf(
+                            "token" to refresh,
+                            "token_type_hint" to "refresh_token",
+                            "client_id" to config.clientId,
+                        ),
+                    )
+                }.onFailure {
+                    // 吊销失败只是让「下次静默回原账号」的风险回来一点，
+                    // 不该因此把登出搞失败，也不必打扰用户。
+                    Log.w("AuthStore", "吊销 refresh token 失败：${it::class.java.simpleName}")
+                }
+            }
+        }
     }
 
     // MARK: - Private
@@ -532,7 +651,33 @@ class AuthStore private constructor(
 
         /** 是否已取得 offline_access 授权（拿到过 refresh token），见 [offlineAccessGranted]。 */
         private const val KEY_OFFLINE_GRANTED = "offline_access_granted"
+
+        /** 登出后置位：下次授权必须带 prompt=login，避免浏览器用还在的 SSO 会话静默登录。 */
+        private const val KEY_FORCE_REAUTH = "force_reauth"
     }
+}
+
+/**
+ * token 端点回了非 2xx。
+ *
+ * 单独一个类型，是为了让 [AuthStore.accessToken] 能区分「这个 refresh token 确实废了」
+ * 和「服务器/network 抖了一下」—— 前者该登出，后者只该把本次请求降级成匿名。
+ */
+class HttpStatusException(
+    val status: Int,
+    val body: String,
+) : Exception("HTTP $status${body.take(120).takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}") {
+
+    /**
+     * 这个响应是否意味着 refresh token 已被授权服务器作废。
+     *
+     * Logto 对作废的 refresh token 回 **400 + `{"error":"invalid_grant"}`**；
+     * token 端点整体不可用或凭证被彻底拒绝时回 401。两者都说明本地这份会话
+     * 确实没法再用了。其余（429 限流、5xx 故障、网关错误）refresh token 仍是好的，
+     * 登出只会白白把用户踢下线。
+     */
+    val invalidatesGrant: Boolean
+        get() = status == 401 || (status == 400 && body.contains("invalid_grant"))
 }
 
 /**
@@ -573,11 +718,10 @@ private class HttpJson {
 
     private fun HttpURLConnection.readBody(): String {
         return try {
-            val stream = if (responseCode in 200..299) inputStream else errorStream
+            val status = responseCode
+            val stream = if (status in 200..299) inputStream else errorStream
             val text = stream?.bufferedReader()?.use(BufferedReader::readText).orEmpty()
-            if (responseCode !in 200..299) {
-                error("HTTP $responseCode${text.take(120).takeIf { it.isNotBlank() }?.let { ": $it" } ?: ""}")
-            }
+            if (status !in 200..299) throw HttpStatusException(status, text)
             text
         } finally {
             disconnect()

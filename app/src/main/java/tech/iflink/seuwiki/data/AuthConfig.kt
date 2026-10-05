@@ -56,6 +56,12 @@ data class AuthConfig(
     val userinfoEndpoint: String get() = "$issuer/me"
     val endSessionEndpoint: String get() = "$issuer/session/end"
 
+    /**
+     * RFC 7009 吊销端点。退出登录时用它作废 refresh token，
+     * 否则该 token 在服务端最长还有 14 天有效期，见 [AuthStore.logout]。
+     */
+    val revocationEndpoint: String get() = "$issuer/token/revocation"
+
     /** clientId 仍为占位值时为 false：UI 据此禁用登录按钮并提示「登录服务配置中」。 */
     val isConfigured: Boolean
         get() = clientId.isNotEmpty() && clientId != "YOUR_LOGTO_NATIVE_APP_ID"

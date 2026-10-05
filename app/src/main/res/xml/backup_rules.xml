@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  备份规则（Manifest 的 android:fullBackupContent，供 API 23~30 使用）。
+
+  排除登录态文件：access token / refresh token 虽然现在已用 Keystore 加密，
+  但 Keystore 的主密钥不会跟着备份走 —— 换机后这些密文解不开，等于垃圾数据。
+  宁可让用户在手机上重新登录一次，也不要把凭证带出本机。
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="seu_wiki_auth.xml" />
+</full-backup-content>

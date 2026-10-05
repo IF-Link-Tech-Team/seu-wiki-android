@@ -4,13 +4,21 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- 本地提醒：API 33+ 弹窗要用户授权，34+ 精确闹钟另需这一项 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
     <application
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/Theme.SEUWiki"
+        android:enableOnBackInvokedCallback="true"
         android:networkSecurityConfig="@xml/network_security_config">
 
         <!--
@@ -44,19 +52,24 @@
 
           scheme/host 必须与 AuthConfig 里的 REDIRECT_SCHEME / APP_LINK_HOST 一致。
 
-          singleTask + noHistory：Custom Tab 属于浏览器所在的任务栈，本 Activity 由浏览器
-          派发，若不留 noHistory，finish() 之后会重新露出下面的 Custom Tab —— 表现为
-          「登录其实成功了，但眼前只剩一片浏览器黑屏」。noHistory 让它处理完即出栈，
-          真正的「回到 App」由 [AuthCallbackActivity] 显式拉起 MainActivity 完成。
+          singleTask：Custom Tab 属于浏览器所在的任务栈，本 Activity 由浏览器
+          派发，复用既有实例避免回调重放时堆叠多个实例。
           excludeFromRecents：它不渲染任何 UI，不该出现在最近任务里。
+
+          这里**刻意不再用 noHistory**（A-5）：换 token 的协程改挂在 [AuthStore] 的
+          应用级 scope 上，不再依赖本 Activity 的生命周期；而 noHistory 的语义是
+          「一旦不可见就 finish 自己」，用户切出去看一眼短信验证码再切回来，
+          本 Activity 已经被销毁，那次 code 交换连同已清理的 PKCE 材料一起没了，
+          回到 App 只剩一句「登录会话已失效」。透明主题则保证从浏览器切进来时
+          不会闪一下白底。
+          真正的「回到 App」由 [AuthCallbackActivity] 显式拉起 MainActivity 完成。
         -->
         <activity
             android:name=".AuthCallbackActivity"
             android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleTask"
-            android:noHistory="true"
-            android:theme="@style/Theme.SEUWiki">
+            android:theme="@style/Theme.SEUWiki.Transparent">
             <intent-filter android:autoVerify="true">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

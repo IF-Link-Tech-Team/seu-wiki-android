@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  数据提取规则（Manifest 的 android:dataExtractionRules，供 API 31+ 使用）。
+
+  cloud-backup：连云备份也不带 token。
+  device-transfer：换机直传同样排除 —— Keystore 主密钥不随设备走，
+  带过去的密文在新设备上无法解密。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="seu_wiki_auth.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="seu_wiki_auth.xml" />
+    </device-transfer>
+</data-extraction-rules>
