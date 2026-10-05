@@ -418,4 +418,8 @@
     <string name="bookmark_remove">取消收藏</string>
     <string name="profile_section_bookmarks">我的收藏</string>
     <string name="profile_empty_bookmarks">暂无收藏，在手册或经验详情页点右上角收藏后会出现在这里</string>
+
+    <!-- 画像里的长列表选择器（学院 28 项） -->
+    <string name="profile_picker_search_hint">搜索</string>
+    <string name="profile_picker_no_result">没有匹配「%1$s」的选项</string>
 </resources>

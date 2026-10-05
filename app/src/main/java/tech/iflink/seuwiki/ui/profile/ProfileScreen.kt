@@ -13,15 +13,18 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.Icon
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
@@ -433,31 +436,32 @@ private fun PersonaRow(
     onSelect: (String) -> Unit,
 ) {
     val colors = SeuTheme.colors
-    Column(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onToggle)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(label, style = SeuType.Body, color = colors.label)
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = value,
-                style = SeuType.Body,
-                color = colors.secondaryLabel,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.width(6.dp))
-            Icon(
-                imageVector = SeuIcons.of("chevron.right"),
-                contentDescription = null,
-                tint = colors.tertiaryLabel,
-                modifier = Modifier.size(14.dp),
+    val isLong = options.size >= SEARCHABLE_OPTION_COUNT
+
+    // 长列表不再内联展开成一堆胶囊：学院有 28 项，内联展开要在一片胶囊里翻找，
+    // 而且展开后把下面几屏内容全顶走。改走 Material 的「带搜索的单选对话框」——
+    // 这是 Android 上长单选列表的原生形态，和 iOS 的 `.searchable` 是同一个意图
+    // 各自用本平台的控件实现（不跨端模仿控件）。
+    if (isLong) {
+        var dialogVisible by rememberSaveable { mutableStateOf(false) }
+        PersonaRowHeader(label = label, value = value, onClick = { dialogVisible = true })
+        if (dialogVisible) {
+            SearchableOptionDialog(
+                title = label,
+                options = options,
+                selected = value,
+                onSelect = {
+                    onSelect(it)
+                    dialogVisible = false
+                },
+                onDismiss = { dialogVisible = false },
             )
         }
+        return
+    }
+
+    Column(Modifier.fillMaxWidth()) {
+        PersonaRowHeader(label = label, value = value, onClick = onToggle)
         if (expanded) {
             FlowRow(
                 modifier = Modifier
@@ -468,6 +472,131 @@ private fun PersonaRow(
             ) {
                 options.forEach { option ->
                     ProfileChip(label = option, selected = option == value) { onSelect(option) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PersonaRowHeader(label: String, value: String, onClick: () -> Unit) {
+    val colors = SeuTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = SeuType.Body, color = colors.label)
+        Spacer(Modifier.weight(1f))
+        Text(
+            text = value,
+            style = SeuType.Body,
+            color = colors.secondaryLabel,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Spacer(Modifier.width(6.dp))
+        Icon(
+            imageVector = SeuIcons.of("chevron.right"),
+            contentDescription = null,
+            tint = colors.tertiaryLabel,
+            modifier = Modifier.size(14.dp),
+        )
+    }
+}
+
+/**
+ * 选到多少项就改用「带搜索的对话框」，不再内联展开成胶囊。
+ *
+ * 学段 3 项、年级 13 项内联胶囊其实更好用 —— 一眼看全、点一下就中；学院 28 项
+ * 内联展开要在一片胶囊里翻找，还会把下面几屏全顶走。阈值取 20。
+ */
+internal const val SEARCHABLE_OPTION_COUNT = 20
+
+/**
+ * 按关键词过滤选项。
+ *
+ * 抽成顶层纯函数是为了让自检能真的打到这里：界面里 `options` 是
+ * `stringArrayResource` 得来的，测试没法直接塞。
+ *
+ * 匹配**忽略大小写且允许子串命中**（「计算机」要能命中「计算机科学与工程学院」）。
+ * 空白查询返回全部 —— 用户刚点开还没输入时不该看到空列表。
+ */
+internal fun filterOptions(options: List<String>, query: String): List<String> {
+    val q = query.trim()
+    if (q.isEmpty()) return options
+    return options.filter { it.contains(q, ignoreCase = true) }
+}
+
+/** Material 风格的「带搜索的单选」对话框。 */
+@Composable
+private fun SearchableOptionDialog(
+    title: String,
+    options: List<String>,
+    selected: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val colors = SeuTheme.colors
+    var query by rememberSaveable { mutableStateOf("") }
+    val visible = remember(options, query) { filterOptions(options, query) }
+
+    androidx.compose.ui.window.Dialog(onDismissRequest = onDismiss) {
+        CardColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 520.dp),
+        ) {
+            Text(
+                text = title,
+                style = SeuType.SubheadlineSemibold,
+                color = colors.label,
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
+            )
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                singleLine = true,
+                placeholder = { Text(stringResource(R.string.profile_picker_search_hint), style = SeuType.Body) },
+                leadingIcon = {
+                    Icon(SeuIcons.of("magnifyingglass"), contentDescription = null, tint = colors.secondaryLabel)
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            )
+            if (visible.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.profile_picker_no_result, query),
+                    style = SeuType.Body,
+                    color = colors.secondaryLabel,
+                    modifier = Modifier.padding(16.dp),
+                )
+            } else {
+                LazyColumn(Modifier.heightIn(max = 360.dp)) {
+                    items(visible) { option ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onSelect(option) }
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(option, style = SeuType.Body, color = colors.label)
+                            Spacer(Modifier.weight(1f))
+                            if (option == selected) {
+                                Icon(
+                                    imageVector = SeuIcons.of("checkmark"),
+                                    contentDescription = null,
+                                    tint = colors.accent,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                        InsetDivider()
+                    }
                 }
             }
         }

@@ -24,6 +24,8 @@ import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.Routes
 import tech.iflink.seuwiki.ui.search.SearchScope
+import tech.iflink.seuwiki.ui.profile.SEARCHABLE_OPTION_COUNT
+import tech.iflink.seuwiki.ui.profile.filterOptions
 import java.io.File
 
 /**
@@ -304,6 +306,51 @@ class SelfCheckTest {
         listOf("bookmark", "bookmark.fill", "exclamationmark.triangle", "person.2").forEach {
             assertTrue("SF 名 \"$it\" 没登记", SeuIcons.isMapped(it))
         }
+    }
+
+    // MARK: - 画像长列表选择器
+
+    private val colleges = listOf(
+        "建筑学院", "机械工程学院", "信息科学与工程学院", "计算机科学与工程学院",
+        "软件学院", "数学学院", "外国语学院", "医学院",
+    )
+
+    @Test
+    fun `画像 空白查询返回全部`() {
+        // 用户刚点开还没输入时不该看到空列表。
+        listOf("", "   ").forEach {
+            assertEquals("查询 \"$it\" 应返回全部 ${colleges.size} 项", colleges.size, filterOptions(colleges, it).size)
+        }
+    }
+
+    @Test
+    fun `画像 搜索子串能命中`() {
+        // 「计算机」要能命中「计算机科学与工程学院」，不能要求全等。
+        assertEquals(listOf("计算机科学与工程学院"), filterOptions(colleges, "计算机"))
+        assertEquals(listOf("软件学院"), filterOptions(colleges, "软件"))
+    }
+
+    @Test
+    fun `画像 搜索忽略大小写`() {
+        val ascii = listOf("CS", "ML", "SEU")
+        assertEquals(listOf("CS"), filterOptions(ascii, "cs"))
+    }
+
+    @Test
+    fun `画像 搜不到时返回空 而不是全部`() {
+        // 反过来才是危险的：把「没匹配上」当成「不过滤」，用户会看到一堆
+        // 与关键词无关的项还以为搜索坏了。
+        assertTrue(filterOptions(colleges, "不存在的学院").isEmpty())
+    }
+
+    @Test
+    fun `画像 只有学院够长才用搜索 对齐 iOS 阈值`() {
+        // 学段 3 / 年级 13 内联胶囊更好用，学院 28 项才需要搜索。
+        // 两端阈值都是 20，行为一致。
+        assertEquals(20, SEARCHABLE_OPTION_COUNT)
+        assertTrue("学院该走搜索", 28 >= SEARCHABLE_OPTION_COUNT)
+        assertTrue("年级不该走搜索", 13 < SEARCHABLE_OPTION_COUNT)
+        assertTrue("学段不该走搜索", 3 < SEARCHABLE_OPTION_COUNT)
     }
 
     // MARK: - 收藏
