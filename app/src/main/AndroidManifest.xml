@@ -32,7 +32,17 @@
 
         <!--
           OIDC 回调落点，对应 iOS Info.plist 的 CFBundleURLTypes。
-          scheme 必须与 AuthConfig.REDIRECT_SCHEME 一致（tech.iflink.seuwiki://callback）。
+
+          下面挂两个 intent-filter，优先命中的是**已验证的 https**（App Link）：
+
+          - https + autoVerify：系统安装时抓 https://seu.wiki/.well-known/assetlinks.json
+            确认这个域名属于本 App，校验通过后回调直接进 App，不再弹
+            「callback 想要打开外部应用 SEU.wiki」的确认框。校验不通过时
+            https 会被退化成普通网页打开，所以 AuthStore 会先查域校验状态再决定用哪个。
+          - custom scheme：Android 11 及以下、以及域校验还没跑完时的兜底路径。
+            这条不能删，否则这些设备上根本登录不了。
+
+          scheme/host 必须与 AuthConfig 里的 REDIRECT_SCHEME / APP_LINK_HOST 一致。
 
           singleTask + noHistory：Custom Tab 属于浏览器所在的任务栈，本 Activity 由浏览器
           派发，若不留 noHistory，finish() 之后会重新露出下面的 Custom Tab —— 表现为
@@ -47,6 +57,15 @@
             android:launchMode="singleTask"
             android:noHistory="true"
             android:theme="@style/Theme.SEUWiki">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="seu.wiki"
+                    android:pathPrefix="/callback" />
+            </intent-filter>
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />

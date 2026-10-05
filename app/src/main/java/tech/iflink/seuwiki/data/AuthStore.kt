@@ -1,7 +1,9 @@
 package tech.iflink.seuwiki.data
 
 import android.content.Context
+import android.content.pm.verify.domain.DomainVerificationManager
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,11 +47,11 @@ import kotlinx.serialization.json.jsonPrimitive
  * 一样**不引入新的网络库**；Custom Tabs 用已在依赖里的 `androidx.browser`。
  */
 class AuthStore private constructor(
-    context: Context,
+    private val appContext: Context,
     private val config: AuthConfig,
 ) {
 
-    private val prefs = context.getSharedPreferences("seu_wiki_auth", Context.MODE_PRIVATE)
+    private val prefs = appContext.getSharedPreferences("seu_wiki_auth", Context.MODE_PRIVATE)
     private val json = Json { ignoreUnknownKeys = true }
     private val http = HttpJson()
 
@@ -120,11 +122,12 @@ class AuthStore private constructor(
         val verifier = randomUrlSafe(32)
         val challenge = base64Url(sha256(verifier.toByteArray(Charsets.US_ASCII)))
         val state = randomUrlSafe(16)
+        val redirectUri = resolveRedirectUri()
         val url = buildString {
             append(config.authorizationEndpoint)
             append("?client_id=").append(enc(config.clientId))
             append("&response_type=code")
-            append("&redirect_uri=").append(enc(config.redirectUri))
+            append("&redirect_uri=").append(enc(redirectUri))
             append("&scope=").append(enc(config.scopes.joinToString(" ")))
             append("&state=").append(enc(state))
             append("&code_challenge=").append(enc(challenge))
@@ -134,7 +137,11 @@ class AuthStore private constructor(
             // resource 让 Logto 签发面向本 API 的 JWT；opaque token 也能用，故可空。
             config.resource?.let { append("&resource=").append(enc(it)) }
         }
-        return AuthorizationRequest(url = url, verifier = verifier, state = state)
+        Log.i(
+            "AuthStore",
+            "本次登录 redirect_uri=$redirectUri，App Link 已校验=${isAppLinkVerified()}",
+        )
+        return AuthorizationRequest(url = url, verifier = verifier, state = state, redirectUri = redirectUri)
     }
 
     /**
@@ -147,7 +154,7 @@ class AuthStore private constructor(
         isBusy = true
         lastError = null
         try {
-            if (uri.scheme != config.callbackScheme) return false
+            if (!isCallbackUri(uri)) return false
             val error = uri.getQueryParameter("error")
             if (error != null) {
                 lastError = uri.getQueryParameter("error_description") ?: "登录失败：$error"
@@ -177,7 +184,7 @@ class AuthStore private constructor(
             }
             clearPending()
 
-            val token = exchangeCode(code, pending.verifier)
+            val token = exchangeCode(code, pending.verifier, pending.redirectUri)
             // 拿到 refresh token 即说明 Logto 认可了 offline_access，之后不必再弹授权页。
             if (token.refreshToken != null) offlineAccessGranted = true
             val userInfo = fetchUserInfo(token.accessToken)
@@ -265,10 +272,25 @@ class AuthStore private constructor(
 
     // MARK: - Private
 
-    /** 授权请求 + 需要跨进程保留的 PKCE 材料。 */
-    data class AuthorizationRequest(val url: String, val verifier: String, val state: String)
+    /**
+     * 授权请求 + 需要跨进程保留的 PKCE 材料。
+     *
+     * [redirectUri] 必须一并带出去：OIDC 要求换 token 时的 `redirect_uri` 与授权
+     * 请求里的**完全一致**，而这个值是每次登录现场定的（见 [resolveRedirectUri]），
+     * 不存下来就还原不了。
+     */
+    data class AuthorizationRequest(
+        val url: String,
+        val verifier: String,
+        val state: String,
+        val redirectUri: String,
+    )
 
-    private data class PendingRequest(val verifier: String, val state: String)
+    private data class PendingRequest(
+        val verifier: String,
+        val state: String,
+        val redirectUri: String,
+    )
 
     private data class TokenResponse(
         val accessToken: String,
@@ -300,11 +322,15 @@ class AuthStore private constructor(
         val avatarUrl: String?,
     )
 
-    private suspend fun exchangeCode(code: String, verifier: String): TokenResponse {
+    private suspend fun exchangeCode(
+        code: String,
+        verifier: String,
+        redirectUri: String,
+    ): TokenResponse {
         val form = mapOf(
             "grant_type" to "authorization_code",
             "code" to code,
-            "redirect_uri" to config.redirectUri,
+            "redirect_uri" to redirectUri,
             "client_id" to config.clientId,
             "code_verifier" to verifier,
         ) + resourceParam()
@@ -350,6 +376,7 @@ class AuthStore private constructor(
         .remove(KEY_AVATAR)
         .remove(KEY_VERIFIER)
         .remove(KEY_STATE)
+        .remove(KEY_REDIRECT_URI)
         .apply()
 
     private fun persist(s: Session) {
@@ -387,22 +414,76 @@ class AuthStore private constructor(
     private fun savePending(p: PendingRequest) = prefs.edit()
         .putString(KEY_VERIFIER, p.verifier)
         .putString(KEY_STATE, p.state)
+        .putString(KEY_REDIRECT_URI, p.redirectUri)
         .apply()
 
     private fun readPending(): PendingRequest? {
         val verifier = prefs.getString(KEY_VERIFIER, null) ?: return null
         val state = prefs.getString(KEY_STATE, null) ?: return null
-        return PendingRequest(verifier, state)
+        val redirectUri = prefs.getString(KEY_REDIRECT_URI, null) ?: return null
+        return PendingRequest(verifier, state, redirectUri)
     }
 
     private fun clearPending() = prefs.edit()
         .remove(KEY_VERIFIER)
         .remove(KEY_STATE)
+        .remove(KEY_REDIRECT_URI)
         .apply()
 
     /** 保存当前这次请求的 PKCE 材料，**必须在打开浏览器之前**调用。 */
     fun rememberPending(request: AuthorizationRequest) =
-        savePending(PendingRequest(request.verifier, request.state))
+        savePending(PendingRequest(request.verifier, request.state, request.redirectUri))
+
+    // MARK: - 回调地址：App Link 优先，custom scheme 兜底
+
+    /**
+     * 系统现在会不会把 `https://seu.wiki/callback` 直接交给本 App。
+     *
+     * 直接问系统「seu.wiki 这个域，链接处理权限是不是 VERIFIED」。
+     *
+     * 不用 `resolveActivity` 那种「这条链接归谁」的间接问法：未验证时系统对该链接
+     * 返回的候选里**本 App 也在其中**（intent-filter 匹配得上），而 `resolveActivity`
+     * 只有一个返回值，很容易在用户把浏览器设成默认时误判成「已生效」——
+     * 那样就会拿 https 去授权，结果浏览器正常打开网页，**登录直接断掉**。
+     * 只认 VERIFIED 这个唯一确定的信号，判错方向才是安全的那一侧。
+     *
+     * 实践上国产 ROM 基本拿不到 VERIFIED：域验证由 GMS 编排且要能连外网，
+     * 国内 ROM 的 GMS 多为停用或不可达（实测 Redmi 上 GMS enabled=0、
+     * 到 digitalassetlinks.googleapis.com 100% 丢包，状态恒为 1024）。
+     * 所以这些设备会一直走 custom scheme，保留原来那个确认框 —— 这是系统限制，
+     * 不是配置问题，服务器侧的 assetlinks.json 本身是对的（Google 官方
+     * statements:list 接口能正确列出本应用的两条声明）。
+     */
+    private fun isAppLinkVerified(): Boolean {
+        // DomainVerificationManager 是 API 31 才有；更早的版本系统对 https 链接
+        // 一律弹「用哪个应用打开」，不如 custom scheme。
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return false
+        return try {
+            val manager =
+                appContext.getSystemService(DomainVerificationManager::class.java) ?: return false
+            // isLinkHandlingAllowed() 正是「state == DOMAIN_STATE_VERIFIED」的语义化写法。
+            // 平台签名把它标成了可空，用 ?: 收口成保守的 false。
+            manager.getDomainVerificationUserState(AuthConfig.APP_LINK_HOST)
+                ?.isLinkHandlingAllowed == true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /** 本次登录该用哪个回调地址，见 [AuthConfig.APP_LINK_REDIRECT_URI]。 */
+    private fun resolveRedirectUri(): String =
+        if (isAppLinkVerified()) AuthConfig.APP_LINK_REDIRECT_URI else config.redirectUri
+
+    /**
+     * 两种回调都认：App Link 发过来的是 `https://seu.wiki/callback?code=...`，
+     * custom scheme 发过来的是 `tech.iflink.seuwiki://callback?code=...`。
+     * query 参数完全一致，所以解析逻辑不用分叉。
+     */
+    private fun isCallbackUri(uri: Uri): Boolean {
+        if (uri.scheme.equals(config.callbackScheme, ignoreCase = true)) return true
+        return uri.scheme.equals("https", ignoreCase = true) &&
+            uri.host.equals(AuthConfig.APP_LINK_HOST, ignoreCase = true)
+    }
 
     private fun randomUrlSafe(bytes: Int): String {
         val buf = ByteArray(bytes)
@@ -445,6 +526,9 @@ class AuthStore private constructor(
         private const val KEY_AVATAR = "avatar_url"
         private const val KEY_VERIFIER = "pkce_verifier"
         private const val KEY_STATE = "pkce_state"
+
+        /** 本次授权用的 redirect_uri，换 token 时必须原样回传（OIDC 要求一致）。 */
+        private const val KEY_REDIRECT_URI = "redirect_uri"
 
         /** 是否已取得 offline_access 授权（拿到过 refresh token），见 [offlineAccessGranted]。 */
         private const val KEY_OFFLINE_GRANTED = "offline_access_granted"

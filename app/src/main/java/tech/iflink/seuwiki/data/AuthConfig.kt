@@ -18,7 +18,11 @@ data class AuthConfig(
      * 不共用一张登记列表。
      */
     val clientId: String = "yb6csafyv7tviokwbbu2w",
-    /** 回调 URL。scheme 已在 AndroidManifest 的 `CFBundleURLTypes` 等价项里注册。 */
+    /**
+     * 回调 URL 的**兜底**形态（custom scheme）。scheme 已在 AndroidManifest 注册。
+     *
+     * 已不是首选，但删不得 —— 见 [APP_LINK_REDIRECT_URI] 说明的降级路径。
+     */
     val redirectUri: String = "$REDIRECT_SCHEME://callback",
     val callbackScheme: String = REDIRECT_SCHEME,
     /**
@@ -59,5 +63,31 @@ data class AuthConfig(
     companion object {
         /** 与 iOS `tech.iflink.seuwiki` 保持一致，两端回调 scheme 相同。 */
         const val REDIRECT_SCHEME = "tech.iflink.seuwiki"
+
+        /**
+         * App Link（已验证 https 链接）回调，供 Android 消除系统确认框。
+         *
+         * custom scheme 的固有问题：系统无法预知哪个 App 会响应
+         * `tech.iflink.seuwiki://`，于是每次回调都要弹「callback 想要打开外部应用
+         * SEU.wiki」的确认框。换成**已验证的 https 域名**后，系统在安装时就确认过
+         * `https://seu.wiki/callback` 属于本 App，回调直接进 App，一个框都不弹。
+         *
+         * 前置条件三件套，缺一不可：
+         * 1. `https://seu.wiki/.well-known/assetlinks.json` 可访问，且 JSON 里的
+         *    签名指纹与本 APK 的签名证书一致（已挂在 iflink-prod 的 Caddy 上）；
+         * 2. AndroidManifest 里对应的 intent-filter 带 `android:autoVerify="true"`；
+         * 3. Logto 应用「SEU Wiki Android」把这条 URI 也加进 redirect URI 列表。
+         *
+         * **为什么还要留着 custom scheme**：Android 12+ 只有在 App Link 校验通过时
+         * 才会静默打开；校验没过（或 Android 11 及以下，系统根本不强制校验）时，
+         * https 链接会退回成「在浏览器打开」—— 登录就断了。所以 [AuthStore] 每次
+         * 登录前查一次系统域校验状态，用 https 还是 custom scheme 现场决定，
+         * 保证任何设备上都能登录完。
+         *
+         * iOS 端不需要这套：`ASWebAuthenticationSession` 走 custom scheme 是系统
+         * 原生支持的路径，本来就没有确认框，Universal Links 对登录场景无收益。
+         */
+        const val APP_LINK_HOST = "seu.wiki"
+        const val APP_LINK_REDIRECT_URI = "https://$APP_LINK_HOST/callback"
     }
 }
