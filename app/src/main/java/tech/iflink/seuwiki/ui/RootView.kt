@@ -1,14 +1,18 @@
 package tech.iflink.seuwiki.ui
 
-import androidx.compose.ui.res.stringResource
 import androidx.annotation.StringRes
 import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -28,6 +32,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -48,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.ReminderReceiver
 import androidx.navigation.NavHostController
@@ -232,17 +239,28 @@ fun RootView(
                 AppTab.entries.firstOrNull { it.route == entry.destination.route }
             } ?: AppTab.Home
     }
+    // tab 栏只在 5 个一级页面显示（UI/UX 对齐方案 v2 §3.1）。子页面隐藏后，
+    // 底部空间让给当前页面的操作条，末尾内容也不用再靠 padding 补丁躲开它。
+    //
+    // 判据是**栈顶**那一项：详情页、话题页、手册条目、课表、绩点、个人页、
+    // 「查看全部」列表的 route 都不在 AppTab 里。
+    val showTabBar = remember(backStack) {
+        AppTab.entries.any { it.route == backStack.lastOrNull()?.destination?.route }
+    }
 
     Box(
         Modifier
             .fillMaxSize()
             .background(SeuTheme.colors.groupedBackground),
     ) {
-        NavHost(
-            navController = navController,
-            startDestination = AppTab.Home.route,
-            modifier = Modifier.fillMaxSize(),
-        ) {
+        // 子页面上 [ListBottomPadding] / [TabBarClearance] 要少留一截，
+        // 所以必须让 NavHost 树读到「当前 tab 栏不可见」。
+        CompositionLocalProvider(LocalTabBarVisible provides showTabBar) {
+            NavHost(
+                navController = navController,
+                startDestination = AppTab.Home.route,
+                modifier = Modifier.fillMaxSize(),
+            ) {
             // --- tab roots ---
             composable(AppTab.Home.route) {
                 HomeScreen(
@@ -398,13 +416,22 @@ fun RootView(
                     onBack = { navController.popBackStack() },
                 )
             }
-        }
+            }   // NavHost
+        }       // CompositionLocalProvider
 
-        FloatingTabBar(
-            selected = owningTab,
-            onSelect = { navController.switchTab(it) },
+        // 下滑淡出而不是直接消失：推入子页面时让栏体"沉下去"，
+        // 退回来时它"浮上来"，用户能看出这一层是被推走的。
+        AnimatedVisibility(
+            visible = showTabBar,
             modifier = Modifier.align(Alignment.BottomCenter),
-        )
+            enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(tween(200)),
+        ) {
+            FloatingTabBar(
+                selected = owningTab,
+                onSelect = { navController.switchTab(it) },
+            )
+        }
     }
 }
 
@@ -524,7 +551,10 @@ private fun FloatingTabBar(
                     )
                 }
                 .clip(shape)
-                .background(surface),
+                .background(surface)
+                // 让读屏把这 5 个 item 当成一组 tab 播报（"主页，标签，5 个中的第 1 个"），
+                // 否则 TalkBack 会把它们当成 5 个互不相干的按钮。
+                .selectableGroup(),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -537,8 +567,7 @@ private fun FloatingTabBar(
                         .weight(1f)
                         .fillMaxHeight(),
                 )
-            }
-        }
+            }        }
     }
 }
 
@@ -583,9 +612,16 @@ private fun TabItem(
     )
 
     Box(
-        modifier = modifier.clickable(
-            interactionSource = remember { MutableInteractionSource() },
-            indication = null,
+        // 用 `selectable(role = Role.Tab)` 而不是 `clickable`：前者才带上
+        // 「这是一个标签页 / 当前是否选中」的语义，读屏才会播报选中状态；
+        // 后者只是无差别的可点击元素。
+        //
+        // 指示层**用默认的**（M3 波纹）。原来这里是 `indication = null`，
+        // 按下去一点反馈都没有 —— UI/UX 对齐方案 v2 §3.3 点名的就是这一处。
+        // 滑动中的选中胶囊负责"在哪"，波纹负责"按到了"，两者不冲突。
+        modifier = modifier.selectable(
+            selected = selected,
+            role = Role.Tab,
             onClick = onClick,
         ),
         contentAlignment = Alignment.Center,
@@ -605,7 +641,9 @@ private fun TabItem(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
                     imageVector = tab.icon,
-                    contentDescription = stringResource(tab.labelRes),
+                    // 置空：下面紧挨着的 Text 已经带了同样的标签，
+                    // 两处都报读会变成"主页 主页"（UI/UX 方案 §3.5 点名）。
+                    contentDescription = null,
                     tint = tint,
                     modifier = Modifier.size(24.dp),
                 )

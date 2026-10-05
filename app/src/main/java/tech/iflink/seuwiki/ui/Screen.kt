@@ -25,6 +25,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -200,6 +201,11 @@ val ListBottomPadding: Dp
     @Composable get() {
         val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
+        if (!LocalTabBarVisible.current) {
+            // 子页面 tab 栏是隐藏的：再留一份栏体高度就变成凭空多出来的死白，
+            // 而且内容明明已经到底了却还显得"还能滚"。
+            return maxOf(navBottom + 16.dp, imeBottom + 16.dp)
+        }
         // TabBarClearance(58 栏体 + 8×2 外边距) + 22dp 富余 + 导航栏 inset。
         // 键盘弹出时键盘本身就盖住了 tab bar，用 ime 与常规值的较大者即可。
         return maxOf(TabBarClearance + 22.dp + navBottom, imeBottom + 16.dp)
@@ -234,9 +240,28 @@ val tabBarHeight: Dp
  * keeps using [ListBottomPadding] instead, which already includes the inset.
  *
  * 必须是 composable：栏体高度随系统字体缩放变化，写死会在大字体下少让位。
+ *
+ * 子页面上 tab 栏是隐藏的（见 [LocalTabBarVisible]），此时返回 0 ——
+ * 操作条直接贴底，中间不再夹一层空档。
  */
 val TabBarClearance: Dp
-    @Composable get() = tabBarHeight + 16.dp
+    @Composable get() = if (LocalTabBarVisible.current) tabBarHeight + 16.dp else 0.dp
+
+/**
+ * 当前是否显示 tab 栏。由 [tech.iflink.seuwiki.ui.RootView] 按 destination 注入。
+ *
+ * 规则（UI/UX 对齐方案 v2 §3.1）：**tab 栏只在 5 个一级页面显示**，资讯详情、
+ * 帖子详情、话题页、手册条目、课表、绩点、个人页、「查看全部」列表等子页面一律隐藏。
+ *
+ * 理由：安卓的系统返回手势让「退回一级页面」几乎没有成本，子页面直接切 tab 的
+ * 需求很弱；底部空间应该让给当前页面的操作（打开原文 / 设提醒、评论输入框）。
+ * 微信、小红书、B 站、淘宝都是这样。**iOS 不跟随** —— 那边保持 Apple 规范的
+ * tab 栏常驻，这属于机制层的有意差异。
+ *
+ * 默认 `true` 是为了让 Preview 和未包裹的场景（单屏测试）维持原有观感；
+ * `RootView` 一定会显式注入。
+ */
+val LocalTabBarVisible = compositionLocalOf { true }
 
 /**
  * Header for a pushed detail screen.
