@@ -27,12 +27,12 @@ val hasReleaseSigning = keystoreProperties.getProperty("storeFile") != null
 
 android {
     namespace = "tech.iflink.seuwiki"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "tech.iflink.seuwiki"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 36
         // versionCode / versionName 从 gradle property 读，不再写死 1
         // （写死的话每次发版都要手动改，漏改就会被应用商店拒收）。
         // 缺省仍给 1，让本地能构建；CI 用 -PversionCode=… 覆盖。
