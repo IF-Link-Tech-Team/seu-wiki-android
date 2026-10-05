@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +31,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -143,6 +145,7 @@ fun FeedScreen(
         mutableStateOf(FeedFilter())
     }
     var showsFilter by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
 
     // 画像只取 for-you 用到的四个字段，profile 变化时才重建。
     val feedProfile = remember(profile.college, profile.degree, profile.grade, profile.interests) {
@@ -225,6 +228,7 @@ fun FeedScreen(
                 }
             } else {
                 LazyColumn(
+                    state = listState,
                     contentPadding = PaddingValues(
                         start = 16.dp,
                         end = 16.dp,
@@ -248,8 +252,15 @@ fun FeedScreen(
                     }
                 }
                 // 滚到底加载下一页，对应 SwiftUI 的 `.onAppear { if item.id == last { loadMore } }`。
-                LaunchedEffect(visible.size, page.nextCursor) {
-                    if (visible.isNotEmpty() && page.nextCursor != null) {
+                // 必须由滚动位置驱动：挂在列表外按 `visible.size` 触发会变成「一有数据就再拉一页」，
+                // 冷启动就把整条 for-you 链路一次性拉完。
+                val nearEnd by remember { derivedStateOf {
+                    val info = listState.layoutInfo
+                    val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
+                    last >= 0 && last >= info.totalItemsCount - 2
+                } }
+                LaunchedEffect(nearEnd, page.nextCursor) {
+                    if (nearEnd && page.nextCursor != null) {
                         store.loadMore(scope, feedProfile)
                     }
                 }

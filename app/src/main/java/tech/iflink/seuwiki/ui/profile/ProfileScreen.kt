@@ -568,6 +568,12 @@ private fun AboutLine(label: String, value: String) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, style = SeuType.Body, color = colors.label)
         Spacer(Modifier.weight(1f))
-        Text(value, style = SeuType.Body, color = colors.secondaryLabel)
+        Text(
+            text = value,
+            style = SeuType.Body,
+            color = colors.secondaryLabel,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }

@@ -84,22 +84,49 @@ fun FeedRow(
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = item.sourceName,
-                    style = SeuType.Caption,
-                    color = colors.secondaryLabel,
-                )
-                val reason = item.matchReasons.firstOrNull()
-                if (reason != null) {
-                    Text("·", style = SeuType.Caption, color = colors.secondaryLabel)
-                    Text(reason, style = SeuType.Caption, color = colors.accent)
+            // SwiftUI lets the leading texts compress to zero width and truncate
+            // while the relative timestamp keeps its intrinsic size, so the
+            // shrinkable half is nested in a weighted row and the stamp is not.
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text(
+                        text = item.sourceName,
+                        style = SeuType.Caption,
+                        color = colors.secondaryLabel,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    val reason = item.matchReasons.firstOrNull()
+                    if (reason != null) {
+                        Text(
+                            text = "·",
+                            style = SeuType.Caption,
+                            color = colors.secondaryLabel,
+                            maxLines = 1,
+                        )
+                        Text(
+                            text = reason,
+                            style = SeuType.Caption,
+                            color = colors.accent,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false),
+                        )
+                    }
                 }
-                Spacer(Modifier.weight(1f))
                 Text(
                     text = Format.relative(item.publishedAt),
                     style = SeuType.Caption,
                     color = colors.secondaryLabel,
+                    maxLines = 1,
                 )
             }
         }
@@ -145,8 +172,11 @@ fun ForumRow(
                     text = post.authorName,
                     style = SeuType.Caption,
                     color = colors.secondaryLabel,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-                Text("·", style = SeuType.Caption, color = colors.secondaryLabel)
+                Text("·", style = SeuType.Caption, color = colors.secondaryLabel, maxLines = 1)
                 StatLabel(symbol = "heart", text = Format.count(post.likesCount))
                 StatLabel(symbol = "bubble.right", text = post.commentsCount.toString())
             }
@@ -205,12 +235,20 @@ fun ForYouCard(
                     modifier = Modifier.size(15.dp),
                 )
             }
-            Text(item.sourceName, style = SeuType.Caption, color = colors.secondaryLabel)
-            Text("·", style = SeuType.Caption, color = colors.secondaryLabel)
+            Text(
+                text = item.sourceName,
+                style = SeuType.Caption,
+                color = colors.secondaryLabel,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Text("·", style = SeuType.Caption, color = colors.secondaryLabel, maxLines = 1)
             Text(
                 text = Format.relative(item.publishedAt),
                 style = SeuType.Caption,
                 color = colors.secondaryLabel,
+                maxLines = 1,
             )
             Spacer(Modifier.weight(1f))
             if (item.isSelected) {
@@ -341,13 +379,21 @@ fun ForumPostCard(
             }
             val topicName = post.tags.firstNotNullOfOrNull { TopicCatalog.nameForSlug(it) }
             if (topicName != null) {
-                Text(topicName, style = SeuType.CaptionMedium, color = colors.accent)
+                Text(
+                    text = topicName,
+                    style = SeuType.CaptionMedium,
+                    color = colors.accent,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
             }
             Spacer(Modifier.weight(1f))
             Text(
                 text = Format.relative(post.createdAt),
                 style = SeuType.Caption,
                 color = colors.tertiaryLabel,
+                maxLines = 1,
             )
         }
 

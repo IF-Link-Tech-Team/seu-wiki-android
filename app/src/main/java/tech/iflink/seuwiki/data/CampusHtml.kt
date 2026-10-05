@@ -154,26 +154,44 @@ private class WhitelistHtmlParser {
             return 1
         }
         val semi = html.indexOf(';', i)
-        if (semi < 0 || semi - i > 8) {
+        // `&#x1F600;` 这类最长的十进制/十六进制实体也就 9 字符，留到 12 足够。
+        if (semi < 0 || semi - i > 12) {
             appendCharRaw('&')
             return 1
         }
-        val decoded = when (html.substring(i + 1, semi)) {
-            "amp" -> "&"
-            "lt" -> "<"
-            "gt" -> ">"
-            "quot" -> "\""
-            "#39", "apos" -> "'"
-            "nbsp" -> " "
-            else -> null
-        }
+        val decoded = decodeEntity(html.substring(i + 1, semi))
         val length = semi - i + 1
         if (decoded != null) {
             decoded.forEach { appendCharRaw(it) }
         } else {
+            // 未知实体按字面量保留，和 SwiftUI 解析器的降级行为一致。
             html.substring(i, semi + 1).forEach { appendCharRaw(it) }
         }
         return length
+    }
+
+    /**
+     * 解码命名实体与数字实体（`&#NNN;` / `&#xHH;`）。
+     *
+     * iOS 侧把 `body.zh` 交给 `NSAttributedString` 的 HTML 解析器，数字实体由它解码；
+     * 这个手写解析器补上同一套规则，避免真出现 `&#10;` 时原样显示成四个字符。
+     */
+    private fun decodeEntity(name: String): String? {
+        when (name) {
+            "amp" -> return "&"
+            "lt" -> return "<"
+            "gt" -> return ">"
+            "quot" -> return "\""
+            "#39", "apos" -> return "'"
+            "nbsp" -> return " "
+        }
+        if (!name.startsWith("#")) return null
+        val isHex = name.length > 2 && (name[1] == 'x' || name[1] == 'X')
+        val digits = name.substring(if (isHex) 2 else 1)
+        val code = if (isHex) digits.toIntOrNull(16) else digits.toIntOrNull(10)
+        if (code == null || code !in 1..0x10FFFF) return null
+        // 代理对由 StringBuilder 正确拼成，`Int.toString()` 已经按 UTF-16 输出。
+        return code.toString()
     }
 
     private fun appendCharRaw(ch: Char) {

@@ -50,7 +50,18 @@ class FeedStore(
         version.value = version.value + 1
     }
 
-    fun page(scope: FeedScope): PageState = states[FeedScope.key(scope)] ?: PageState()
+    /**
+     * 读某个 scope 的分页状态。
+     *
+     * 这里必须先读一次 [version]：scope 状态存在普通 `MutableMap` 里，本身不是快照可观察的，
+     * 只有在 composition 里读到 `version` 才会在 [bump] 之后触发重组。少了这一行，
+     * 冷启动请求返回后界面不会自己刷新（切 Tab 顺带重组会掩盖掉这个问题）。
+     */
+    fun page(scope: FeedScope): PageState {
+        @Suppress("UNUSED_EXPRESSION")
+        version.value
+        return states[FeedScope.key(scope)] ?: PageState()
+    }
 
     /**
      * `/api/site/pool` 全站搜索，供搜索页的「通知」信源使用。
