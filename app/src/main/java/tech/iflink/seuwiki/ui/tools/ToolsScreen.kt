@@ -8,6 +8,8 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -80,7 +82,13 @@ fun ToolsScreen(
                     ToolCard(
                         tool = tool,
                         subtitle = liveSubtitle(tool, profile),
-                        onClick = { onOpenTool(tool.id) },
+                        // 未上线的工具**不可点**：点了进去只有一个空占位页，
+                        // 那比点不动更让人困惑。要么真能用，要么就别装成能用。
+                        onClick = if (tool.isAvailable) {
+                            { onOpenTool(tool.id) }
+                        } else {
+                            null
+                        },
                     )
                 }
             }
@@ -133,7 +141,9 @@ fun ToolCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .height(118.dp)
+            // heightIn 而不是固定 height：系统字号放大到 200% 时三行文字
+            // 会被硬切掉，heightIn 让它自己长高。
+            .heightIn(min = 118.dp)
             .scale(scale)
             .clip(ContinuousRoundedShape(CardCornerRadius))
             .background(Brush.linearGradient(toolGradientColors(tint)))
@@ -163,11 +173,34 @@ fun ToolCard(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = subtitle ?: tool.subtitle,
+                // 没接通的工具必须说清楚还没上线，不能拿「借阅与研讨间」这种
+                // 读起来完全可用的副标题糊弄过去 —— 点进去只有一个占位页。
+                text = if (!tool.isAvailable) "即将推出" else (subtitle ?: tool.subtitle),
                 style = SeuType.Caption,
                 color = Color.White.copy(alpha = 0.7f * alpha),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+            )
+        }
+
+        // 未上线的工具压一层遮罩并明确标注，且不可点：
+        // 让人一眼看出哪些能用、哪些不能，别点进去才发现是空页。
+        if (!tool.isAvailable) {
+            Box(
+                modifier = Modifier
+                    .matchParentSize()
+                    .background(Color.Black.copy(alpha = 0.35f)),
+            )
+            Text(
+                text = "即将推出",
+                style = SeuType.Caption2Medium,
+                color = Color.White,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.35f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
             )
         }
     }
