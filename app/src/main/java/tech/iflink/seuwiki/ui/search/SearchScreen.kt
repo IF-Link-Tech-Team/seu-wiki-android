@@ -176,6 +176,8 @@ fun SearchScreen(
             when {
                 keyword.isBlank() -> SearchSuggestions(
                     onSelectWord = { keyword = it },
+                    // 键盘弹出时的避让由 `ListBottomPadding` 统一处理（感知
+                    // WindowInsets.ime），这里不再叠加 imePadding，否则会顶两倍。
                     modifier = Modifier.fillMaxSize(),
                 )
 

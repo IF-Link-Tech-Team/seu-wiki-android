@@ -460,6 +460,8 @@ fun GPACalculatorScreen(onBack: () -> Unit) {
                     }
                 }
             } else {
+                // 键盘弹出时课程行要能滚到键盘上方：`ListBottomPadding` 已统一
+                // 感知 WindowInsets.ime（见 Screen.kt 的说明），这里不必再单独处理。
                 LazyColumn(
                     contentPadding = PaddingValues(
                         start = 16.dp,

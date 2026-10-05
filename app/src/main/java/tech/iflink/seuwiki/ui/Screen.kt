@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -182,18 +183,24 @@ fun TabPage(content: @Composable () -> Unit) {
 }
 
 /**
- * Bottom content padding that clears the floating tab bar.
+ * Bottom content padding that clears the floating tab bar **and** the IME.
  *
  * 之前这里是写死的 96.dp，只在「手势导航 + 约 24dp 导航栏」这一种设备上够用：
  * 三键导航的导航栏 inset 约 48dp，实际需要 74 + 48 = 122dp，写死的值会让
- * 最后一个列表项有约 26dp 压在 tab bar 下面点不到。这里改成从真实的
+ * 最后一个列表项有约 26dp 压在 tab bar 下面点不到。改成从真实的
  * `WindowInsets.navigationBars` 算，随系统导航模式变化自适应。
+ *
+ * 键盘弹出时（`WindowInsets.ime`）再额外让出键盘高度：A-16 原来只有提醒编辑
+ * 一处加了 `imePadding`，搜索与绩点页没有，填学分时会被键盘盖住一半还看不出
+ * 有没有滚到位。放在这里统一算，所有用 `ListBottomPadding` 的列表一次到位。
  */
 val ListBottomPadding: Dp
     @Composable get() {
         val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        val imeBottom = WindowInsets.ime.asPaddingValues().calculateBottomPadding()
         // TabBarClearance(58 栏体 + 8×2 外边距) + 22dp 富余 + 导航栏 inset。
-        return TabBarClearance + 22.dp + navBottom
+        // 键盘弹出时键盘本身就盖住了 tab bar，用 ime 与常规值的较大者即可。
+        return maxOf(TabBarClearance + 22.dp + navBottom, imeBottom + 16.dp)
     }
 
 /** 悬浮 tab 栏在正常字体下的栏体高度。 */
