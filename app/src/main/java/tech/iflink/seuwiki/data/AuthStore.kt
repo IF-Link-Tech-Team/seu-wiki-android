@@ -158,6 +158,14 @@ class AuthStore private constructor(
             }
             val pending = readPending()
             if (pending == null) {
+                // 没有待处理的 PKCE 材料，但已经有登录态 —— 这是**旧回调被重放**：
+                // 浏览器历史里那条 tech.iflink.seuwiki://callback?code=... 被再次点开，
+                // 或 Custom Tab 被系统重放。code 是一次性的、verifier 早随首次登录清掉，
+                // 重放必然换不到 token，所以这里不换、也不当失败。
+                //
+                // 关键是要**静默**返回成功：用户此刻是已登录的，对着一个已登录的人弹
+                // 「登录会话已失效」纯属误导，而且没有重试的必要 —— 再点一次登录才是。
+                if (session != null) return true
                 lastError = "登录会话已失效，请重试"
                 return false
             }
