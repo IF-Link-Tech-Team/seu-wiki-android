@@ -4,7 +4,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -31,10 +30,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Outline
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
@@ -47,6 +53,7 @@ import tech.iflink.seuwiki.data.AuthStore
 import tech.iflink.seuwiki.data.FeedApiClient
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
+import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
@@ -330,6 +337,43 @@ private fun NavHostController.switchTab(tab: AppTab) {
     }
 }
 
+/**
+ * 沿 [shape] 自身曲线向外描若干圈淡墨，形成一圈柔和的边缘光晕 —— 充当悬浮 tab 栏的
+ * 投影。**必须在 clip 之前调用**（光晕要画到 shape 之外）。
+ *
+ * 为什么不直接用 `Modifier.shadow(elevation, shape)`：elevation 阴影是「形状 ⊕ 模糊」，
+ * 模糊量相对圆角半径越大，阴影外轮廓的等效圆角就越"方"，和外框那条弧对不齐。
+ * 而这里描的是**同一条路径**，只是向外偏移，所以内外弧在构造上严格同心；
+ * 清晰度也完全由下面这几圈的线宽与 alpha 控制，不受设备 blur 实现差异影响。
+ *
+ * 多圈叠加而非单圈：单圈描边边缘会有一条硬边，叠加几圈低 alpha 才是渐变，
+ * 靠近轮廓处 alpha 累加、向外迅速衰减。
+ *
+ * 为什么要自己扛这个边界：iOS 系统 tab 栏靠材质里的真实背景模糊撑起轮廓，而本工程的
+ * surface 只是 `0xF2FFFFFF` 的扁平近白色、没有 blur。去掉描边后栏体两侧一旦压到白色
+ * 卡片上就没有任何东西定义边界（栏体本身也是白的）。所以光晕不能省。
+ *
+ * @param rings 由内到外的 (线宽 dp, alpha) 列表。
+ */
+private fun DrawScope.drawEdgeHalo(
+    shape: Shape,
+    color: Color,
+    rings: List<Pair<Dp, Float>> = listOf(1.2.dp to 0.045f, 3.dp to 0.05f, 5.5.dp to 0.055f),
+) {
+    val path = when (val outline = shape.createOutline(size, layoutDirection, this)) {
+        is Outline.Generic -> outline.path
+        is Outline.Rounded -> Path().apply { addRoundRect(outline.roundRect) }
+        is Outline.Rectangle -> Path().apply { addRect(outline.rect) }
+    }
+    rings.forEach { (width, alpha) ->
+        drawPath(
+            path = path,
+            color = color.copy(alpha = alpha),
+            style = Stroke(width = width.toPx()),
+        )
+    }
+}
+
 @Composable
 private fun FloatingTabBar(
     selected: AppTab,
@@ -340,10 +384,24 @@ private fun FloatingTabBar(
     // Translucent so content scrolling underneath reads as "behind glass",
     // matching the iOS tab bar's material treatment.
     val surface = if (colors.isDark) Color(0xF21C1C1E) else Color(0xF2FFFFFF)
-    val border = if (colors.isDark) Color(0x1FFFFFFF) else Color(0x14000000)
-    val shadow = if (colors.isDark) Color(0x40000000) else Color(0x1F3C3C43)
+    // 浅色阴影的 alpha 看着定：0x1F(12%) 在**白卡片**上几乎读不出来，栏体两端就会
+    // 直接和内容融在一起（这是去掉描边后必须自己扛起边界的唯一手段）。
+    val shadow = if (colors.isDark) Color(0x40000000) else Color(0x333C3C43)
+    // 顶部发丝线，对应 iOS **系统** tab bar 的真实构造（材质 + 顶部一条 hairline，见
+    // iOS RootTabView 用的是系统 TabView，不是手搓胶囊）。
+    //
+    // 原来这里是一圈完整的 1dp 描边，但胶囊圆角有 29dp（栏高的一半），描边弧与阴影的
+    // 膨胀弧在这么大的半径上必然不共心，两端会看到"双重弧线"。只留顶部一条，
+    // 既对上 iOS，也去掉了打架的那条轮廓。
+    val hairline = if (colors.isDark) Color(0x1FFFFFFF) else Color(0x14000000)
+    val hairlineWidth = 1.dp
+    // 栏体高度先取出来：drawBehind 的 lambda 不是 composable，取不到 tabBarHeight。
+    val barHeight = tabBarHeight
     // 胶囊的圆角 = 半径，所以跟着栏体高度走（大字体下栏体长高，圆角也要跟着圆）。
-    val shape = RoundedCornerShape(tabBarHeight / 2)
+    val radius = barHeight / 2
+    // C：改用超椭圆，与全站卡片（cardStyle 一律 ContinuousRoundedShape）以及 iOS 的
+    // RoundedRectangleStyle.continuous 是同一套曲线语言，不再是工程里唯一的圆弧孤岛。
+    val shape = ContinuousRoundedShape(radius)
 
     Column(
         modifier = modifier
@@ -357,11 +415,33 @@ private fun FloatingTabBar(
                 // 高度随字体缩放（见 ui/Screen.kt 的 tabBarHeight）：固定 58dp 在大字体下
                 // 会裁掉标签。上下都要有界 —— TabItem 用了 fillMaxHeight()，父容器若只给
                 // min 而不给 max，测量会拿到无界高度约束，整棵布局会塌掉。
-                .height(tabBarHeight)
-                .shadow(8.dp, shape, ambientColor = shadow, spotColor = shadow)
+                .height(barHeight)
+                // 刻意**不用** Modifier.shadow(elevation, shape)。elevation 阴影是
+                // 「形状 ⊕ 模糊」：模糊量相对圆角半径一大，阴影外轮廓的等效圆角就跟着
+                // 变"方"，和外框那条弧对不上 —— 这正是最初"弧度差异很奇怪"的来源
+                // （29dp 半径配 8dp 模糊，22px 对 80px，27%）。
+                //
+                // 改用下面 drawBehind 里那条「同源描边光晕」：它就是把同一条曲线向外
+                // 描若干圈，构造上与栏体边缘严格同心，不可能错位，而且清晰度可控。
+                //
+                // 必须在 clip **之前**：光晕要画到 shape 之外，clip 之后就只能被裁掉了。
+                .drawBehind { drawEdgeHalo(shape, shadow) }
                 .clip(shape)
                 .background(surface)
-                .border(1.dp, border, shape),
+                // 顶部发丝线只画在两段圆角之间的直边上，缩进半个线宽，避免被 clip 的
+                // 抗锯齿边缘吃掉半条线。
+                .drawBehind {
+                    val inset = hairlineWidth.toPx() / 2f
+                    val insetX = radius.toPx()
+                    drawLine(
+                        color = hairline,
+                        start = Offset(insetX, inset),
+                        end = Offset(size.width - insetX, inset),
+                        strokeWidth = hairlineWidth.toPx(),
+                    )
+                }
+                .clip(shape)
+                .background(surface),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -434,7 +514,7 @@ private fun TabItem(
             modifier = Modifier
                 .fillMaxHeight()
                 .padding(vertical = 2.dp)
-                .clip(RoundedCornerShape(50))
+                .clip(ContinuousRoundedShape(50.dp))
                 .background(fill)
                 .padding(horizontal = inset),
             contentAlignment = Alignment.Center,
