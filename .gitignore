@@ -10,3 +10,8 @@
 local.properties
 **/build/
 .kotlin/
+
+# 签名材料：绝不能进版本库。密钥丢了就无法给已安装的 App 发更新。
+*.jks
+*.keystore
+keystore.properties
