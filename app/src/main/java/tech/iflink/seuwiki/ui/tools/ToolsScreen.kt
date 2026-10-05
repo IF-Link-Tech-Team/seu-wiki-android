@@ -31,9 +31,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.CardCornerRadius
 import tech.iflink.seuwiki.design.ContinuousRoundedShape
@@ -66,7 +68,7 @@ fun ToolsScreen(
 
     TabPage {
         Column {
-            ScreenHeader(title = "工具", onProfileClick = onOpenProfile)
+            ScreenHeader(title = stringResource(R.string.tools_title), onProfileClick = onOpenProfile)
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 160.dp),
                 modifier = Modifier.fillMaxWidth(),
@@ -100,10 +102,15 @@ fun ToolsScreen(
  * The timetable tile reads live course data; every other tile keeps its mock
  * subtitle, exactly as `liveSubtitle(for:)` does in the SwiftUI view.
  */
+@Composable
 private fun liveSubtitle(tool: ToolItem, profile: UserProfileStore): String? {
     if (tool.id != "timetable") return null
     val count = profile.todayCourseCount()
-    return if (count > 0) "今日 $count 节课" else "今日无课"
+    return if (count > 0) {
+        stringResource(R.string.tools_today_classes, count)
+    } else {
+        stringResource(R.string.tools_today_no_class)
+    }
 }
 
 /**
@@ -166,7 +173,7 @@ fun ToolCard(
             )
             Spacer(Modifier.weight(1f))
             Text(
-                text = tool.name,
+                text = stringResource(tool.nameRes),
                 style = SeuType.HeadlineBold,
                 color = Color.White.copy(alpha = alpha),
                 maxLines = 1,
@@ -175,7 +182,11 @@ fun ToolCard(
             Text(
                 // 没接通的工具必须说清楚还没上线，不能拿「借阅与研讨间」这种
                 // 读起来完全可用的副标题糊弄过去 —— 点进去只有一个占位页。
-                text = if (!tool.isAvailable) "即将推出" else (subtitle ?: tool.subtitle),
+                text = if (!tool.isAvailable) {
+                    stringResource(R.string.tools_coming_soon)
+                } else {
+                    subtitle ?: stringResource(tool.subtitleRes)
+                },
                 style = SeuType.Caption,
                 color = Color.White.copy(alpha = 0.7f * alpha),
                 maxLines = 1,
@@ -192,7 +203,7 @@ fun ToolCard(
                     .background(Color.Black.copy(alpha = 0.35f)),
             )
             Text(
-                text = "即将推出",
+                text = stringResource(R.string.tools_coming_soon),
                 style = SeuType.Caption2Medium,
                 color = Color.White,
                 modifier = Modifier

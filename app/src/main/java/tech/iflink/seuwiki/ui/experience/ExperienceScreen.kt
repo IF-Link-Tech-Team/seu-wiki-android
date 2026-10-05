@@ -37,10 +37,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.data.ExperienceSelection
 import tech.iflink.seuwiki.data.UserProfileStore
@@ -98,7 +101,7 @@ fun ExperienceScreen(
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            ScreenHeader(title = "经验", onProfileClick = onOpenProfile)
+            ScreenHeader(title = stringResource(R.string.experience_title), onProfileClick = onOpenProfile)
             ConsoleBar(
                 items = tabs,
                 selection = tab,
@@ -106,7 +109,7 @@ fun ExperienceScreen(
                     tabKey = it.key
                     scope.launch { pagerState.animateScrollToPage(tabs.indexOf(it)) }
                 },
-                title = { it.label },
+                title = { stringResource(it.labelRes) },
             )
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 when (tabs[page]) {
@@ -126,12 +129,13 @@ private fun ExperienceList(
     docs: DocsStore,
     onOpenEntry: (String) -> Unit,
 ) {
+    val context = LocalContext.current
     ExperienceState(docs) {
         if (docs.experience.isEmpty() && !docs.experienceLoading) {
             EmptyStateView(
-                title = "还没有经验长文",
-                description = docs.experienceError
-                    ?: "「社区」功能即将上线，经验长文会持续补充。",
+                title = stringResource(R.string.experience_empty),
+                description = docs.experienceError?.format(context)
+                    ?: stringResource(R.string.experience_empty_desc),
                 icon = { EmptyIcon("text.book.closed") },
                 topPadding = 64.dp,
             )
@@ -179,7 +183,7 @@ private fun ExperienceFacets(
                     Modifier.cardStyle(padding = 14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("按场景、年级、学院筛选", style = SeuType.SubheadlineSemibold)
+                    Text(stringResource(R.string.experience_filter_title), style = SeuType.SubheadlineSemibold)
                     filters.forEach { facet ->
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
@@ -212,7 +216,7 @@ private fun ExperienceFacets(
                     }
                     if (selection.isActive) {
                         Text(
-                            text = "清除筛选",
+                            text = stringResource(R.string.experience_filter_clear),
                             style = SeuType.Subheadline,
                             color = SeuTheme.colors.accent,
                             modifier = Modifier
@@ -227,8 +231,8 @@ private fun ExperienceFacets(
             if (docs.experience.isEmpty() && !docs.experienceLoading) {
                 item {
                     EmptyStateView(
-                        title = "这个组合下暂时没有内容",
-                        description = "换一个场景或年级再看看。",
+                        title = stringResource(R.string.experience_filter_empty),
+                        description = stringResource(R.string.experience_filter_empty_desc),
                         icon = { EmptyIcon("line.3.horizontal.decrease.circle") },
                         topPadding = 48.dp,
                     )
@@ -249,11 +253,12 @@ private fun HandbookTree(
     onOpenPart: (String) -> Unit,
     onOpenEntry: (String) -> Unit,
 ) {
+    val context = LocalContext.current
     ExperienceState(docs) {
         if (docs.handbook.isEmpty() && !docs.handbookLoading) {
             EmptyStateView(
-                title = "生存手册加载中或暂时不可用",
-                description = docs.handbookError ?: "下拉或重新进入即可重试。",
+                title = stringResource(R.string.experience_handbook_unavailable),
+                description = docs.handbookError?.format(context) ?: stringResource(R.string.experience_handbook_retry),
                 icon = { EmptyIcon("book") },
                 topPadding = 64.dp,
             )
@@ -291,10 +296,10 @@ private fun HandbookPartCard(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(part.label, style = SeuType.Headline, color = SeuTheme.colors.label)
-            Text("查看全部", style = SeuType.Footnote, color = SeuTheme.colors.accent)
+            Text(stringResource(R.string.view_all), style = SeuType.Footnote, color = SeuTheme.colors.accent)
             Spacer(Modifier.weight(1f))
             Text(
-                text = "${part.entries.size} 条",
+                text = stringResource(R.string.experience_count, part.entries.size),
                 style = SeuType.Footnote,
                 color = SeuTheme.colors.secondaryLabel,
             )
@@ -345,8 +350,8 @@ private fun FollowingComingSoon() {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         EmptyStateView(
-            title = "社区功能即将上线",
-            description = "关注、发帖、点赞与评论正在开发中。\n现在可以先逛逛「热门」和「东大生存手册」。",
+            title = stringResource(R.string.experience_coming_soon),
+            description = stringResource(R.string.experience_coming_soon_desc),
             icon = { EmptyIcon("person.2") },
             topPadding = 72.dp,
         )

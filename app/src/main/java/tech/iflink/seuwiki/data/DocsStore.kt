@@ -1,5 +1,6 @@
 package tech.iflink.seuwiki.data
 
+import tech.iflink.seuwiki.R
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -10,6 +11,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import tech.iflink.seuwiki.models.UserFacingError
 import tech.iflink.seuwiki.models.DocEntry
 import tech.iflink.seuwiki.models.DocFilter
 import tech.iflink.seuwiki.models.DocKind
@@ -57,7 +59,7 @@ class DocsStore(
     var handbookLoading by mutableStateOf(false)
         private set
 
-    var handbookError by mutableStateOf<String?>(null)
+    var handbookError by mutableStateOf<UserFacingError?>(null)
         private set
 
     /** 手册详情缓存，按 slug 存；返回详情页旋转后也不会退化成空页面。 */
@@ -81,7 +83,7 @@ class DocsStore(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            handbookError = "生存手册加载失败：${e.message ?: "网络异常"}"
+            handbookError = UserFacingError(R.string.docs_handbook_failed, e.message.orEmpty())
         } finally {
             handbookLoading = false
             bump()
@@ -112,7 +114,7 @@ class DocsStore(
     var experienceLoading by mutableStateOf(false)
         private set
 
-    var experienceError by mutableStateOf<String?>(null)
+    var experienceError by mutableStateOf<UserFacingError?>(null)
         private set
 
     /** 当前生效的筛选条件，界面据此显示已选标签。 */
@@ -147,7 +149,7 @@ class DocsStore(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            experienceError = "经验加载失败：${e.message ?: "网络异常"}"
+            experienceError = UserFacingError(R.string.docs_experience_failed, e.message.orEmpty())
             // 保留上一批内容，别把用户已经看到的清空。
         } finally {
             experienceLoading = false
@@ -191,7 +193,7 @@ class DocsStore(
             searchResult = SearchResult(
                 query = q,
                 loading = false,
-                error = "搜索失败：${e.message ?: "网络异常"}",
+                error = UserFacingError(R.string.docs_search_failed, e.message.orEmpty()),
                 hasSearched = true,
             )
         } finally {
@@ -217,15 +219,6 @@ data class ExperienceSelection(
 ) {
     val isActive: Boolean
         get() = category != null || grade != null || college != null
-
-    /** 已选条件的「分面名 → 值」，用于界面上的可删除标签。 */
-    fun labels(filters: List<DocFilter>): List<Pair<String, String>> {
-        val out = mutableListOf<Pair<String, String>>()
-        category?.let { v -> out += (filters.firstOrNull { it.key == "category" }?.label ?: "场景") to v }
-        grade?.let { v -> out += (filters.firstOrNull { it.key == "grade" }?.label ?: "年级") to v }
-        college?.let { v -> out += (filters.firstOrNull { it.key == "college" }?.label ?: "学院") to v }
-        return out
-    }
 }
 
 /**
@@ -240,7 +233,7 @@ data class SearchResult(
     val experience: List<DocRef> = emptyList(),
     val handbook: List<DocRef> = emptyList(),
     val loading: Boolean = false,
-    val error: String? = null,
+    val error: UserFacingError? = null,
     val hasSearched: Boolean = false,
 ) {
     val total: Int get() = feed.size + experience.size + handbook.size

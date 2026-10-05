@@ -1,5 +1,6 @@
 package tech.iflink.seuwiki.data
 
+import tech.iflink.seuwiki.R
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.verify.domain.DomainVerificationManager
@@ -31,6 +32,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import tech.iflink.seuwiki.models.UserFacingError
 
 /**
  * IF.Link 统一登录态：OIDC 授权码 + **PKCE** 流程，对应 iOS 的 `AuthStore`。
@@ -118,7 +120,7 @@ class AuthStore private constructor(
         private set
 
     /** 最近一次失败的提示，`null` 表示没有错误。UI 应如实展示，不要吞掉。 */
-    var lastError by mutableStateOf<String?>(null)
+    var lastError by mutableStateOf<UserFacingError?>(null)
         private set
 
     val isLoggedIn: Boolean get() = session != null
@@ -149,7 +151,7 @@ class AuthStore private constructor(
      */
     fun buildAuthorizationRequest(): AuthorizationRequest? {
         if (!config.isConfigured) {
-            lastError = "登录服务配置中"
+            lastError = UserFacingError(R.string.profile_login_unconfigured)
             return null
         }
         val verifier = randomUrlSafe(32)
@@ -199,12 +201,19 @@ class AuthStore private constructor(
             if (!isCallbackUri(uri)) return false
             val error = uri.getQueryParameter("error")
             if (error != null) {
-                lastError = uri.getQueryParameter("error_description") ?: "登录失败：$error"
+                // `error_description` 是 Logto / 攻击者都能塞进回调 URL 的任意字符串。
+                // 原样显示等于把界面让给对方：一条伪造的「您的账户已冻结，请联系…」
+                // 会以 App 自己的口吻出现。所以一律套上本地化的「登录失败：」前缀，
+                // 服务端内容只作为细节跟在后面，永远不可能独占一整行。
+                lastError = UserFacingError(
+                    R.string.profile_login_failed,
+                    uri.getQueryParameter("error_description") ?: error,
+                )
                 return false
             }
             val code = uri.getQueryParameter("code")
             if (code.isNullOrEmpty()) {
-                lastError = "登录回调缺少 code"
+                lastError = UserFacingError(R.string.profile_login_missing_code)
                 return false
             }
             val pending = readPending()
@@ -217,11 +226,11 @@ class AuthStore private constructor(
                 // 关键是要**静默**返回成功：用户此刻是已登录的，对着一个已登录的人弹
                 // 「登录会话已失效」纯属误导，而且没有重试的必要 —— 再点一次登录才是。
                 if (session != null) return true
-                lastError = "登录会话已失效，请重试"
+                lastError = UserFacingError(R.string.profile_login_session_expired)
                 return false
             }
             if (uri.getQueryParameter("state") != pending.state) {
-                lastError = "state 校验失败，已中止登录"
+                lastError = UserFacingError(R.string.profile_login_state_mismatch)
                 return false
             }
             clearPending()
@@ -234,7 +243,7 @@ class AuthStore private constructor(
                 expiresAt = System.currentTimeMillis() + token.expiresInMillis,
                 subject = userInfo.subject,
                 displayName = userInfo.name.ifEmpty {
-                    userInfo.email.substringBefore('@').ifEmpty { "IF.Link 用户" }
+                    userInfo.email.substringBefore('@')
                 },
                 email = userInfo.email,
                 avatarUrl = userInfo.avatarUrl,
@@ -253,7 +262,7 @@ class AuthStore private constructor(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            lastError = "登录失败：${e.message ?: e::class.java.simpleName}"
+            lastError = UserFacingError(R.string.profile_login_failed, e.message ?: e::class.java.simpleName)
             return false
         } finally {
             isBusy = false
@@ -419,7 +428,7 @@ class AuthStore private constructor(
         companion object {
             fun from(obj: JsonObject): TokenResponse {
                 val access = obj["access_token"]?.jsonPrimitive?.content
-                    ?: error("token 响应缺少 access_token")
+                    ?: error("token response missing access_token")
                 // 同样要排除 JSON null：否则会存下字符串 "null" 当 refresh token。
                 val refresh = obj["refresh_token"]?.takeIf { it !is JsonNull }
                     ?.jsonPrimitive?.contentOrNull

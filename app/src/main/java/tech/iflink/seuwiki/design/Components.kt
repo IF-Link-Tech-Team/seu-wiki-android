@@ -1,5 +1,7 @@
 package tech.iflink.seuwiki.design
 
+import tech.iflink.seuwiki.R
+import androidx.compose.ui.res.stringResource
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -103,7 +105,7 @@ fun <T> ConsoleBar(
     items: List<T>,
     selection: T,
     onSelect: (T) -> Unit,
-    title: (T) -> String,
+    title: @Composable (T) -> String,
     modifier: Modifier = Modifier,
 ) {
     val colors = SeuTheme.colors
@@ -157,7 +159,8 @@ fun <T> ConsoleBar(
 fun SectionHeader(
     title: String,
     modifier: Modifier = Modifier,
-    actionLabel: String? = "查看全部",
+    // @Composable 函数的默认参数在 composable 上下文求值，所以这里可以直接调 stringResource。
+    actionLabel: String? = stringResource(R.string.view_all),
     onAction: (() -> Unit)? = null,
 ) {
     val colors = SeuTheme.colors

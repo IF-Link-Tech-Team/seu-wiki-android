@@ -30,8 +30,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.DocsApiClient
 import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.data.campusHtmlToAnnotatedString
@@ -69,15 +71,15 @@ fun DocEntryDetailScreen(
     LaunchedEffect(slug) {
         runCatching { docs.detail(slug) }
             .onSuccess { detail = it }
-            .onFailure { error = "加载失败：${it.message ?: "网络异常"}" }
+            .onFailure { error = context.getString(R.string.doc_load_failed, it.message ?: context.getString(R.string.doc_network_error)) }
     }
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = detail?.entry?.title ?: "手册", onBack = onBack)
+            DetailHeader(title = detail?.entry?.title ?: stringResource(R.string.doc_title), onBack = onBack)
             when {
                 detail == null && error != null -> EmptyStateView(
-                    title = "这条内容没能加载出来",
+                    title = stringResource(R.string.doc_load_error_title),
                     description = error,
                     icon = {
                         Icon(
@@ -123,7 +125,7 @@ private fun DocDetailBody(
     ) {
         if (!anchor.isNullOrBlank()) {
             Text(
-                text = "从搜索定位到本节：$anchor",
+                text = stringResource(R.string.doc_jump_to_section, anchor),
                 style = SeuType.Footnote,
                 color = colors.accent,
             )
@@ -135,7 +137,7 @@ private fun DocDetailBody(
 
         // 目录来自服务端下发的 headings（[{id,text,depth}]）。
         if (detail.headings.isNotEmpty()) {
-            Text("目录", style = SeuType.Headline, color = colors.label)
+            Text(stringResource(R.string.doc_outline), style = SeuType.Headline, color = colors.label)
             detail.headings.forEach { heading ->
                 Text(
                     text = "· ${heading.text}",
@@ -146,10 +148,10 @@ private fun DocDetailBody(
             }
         }
 
-        Text("正文", style = SeuType.Headline, color = colors.label)
+        Text(stringResource(R.string.doc_body), style = SeuType.Headline, color = colors.label)
 
         if (detail.html.isBlank()) {
-            Text("这条内容暂时没有正文。", style = SeuType.Subheadline, color = colors.secondaryLabel)
+            Text(stringResource(R.string.doc_no_body), style = SeuType.Subheadline, color = colors.secondaryLabel)
         } else {
             val parsed = remember(detail.html, colors.accent, baseUrl) {
                 campusHtmlToAnnotatedString(detail.html, colors.accent, baseUrl)
@@ -164,7 +166,7 @@ private fun DocDetailBody(
         detail.sourceUrl?.let { url ->
             Spacer(Modifier.height(8.dp))
             Text(
-                text = "查看原文 →",
+                text = stringResource(R.string.doc_view_original),
                 style = SeuType.SubheadlineSemibold,
                 color = colors.accent,
                 modifier = Modifier
@@ -190,16 +192,17 @@ fun HandbookPartScreen(
 ) {
     val colors = SeuTheme.colors
     LaunchedEffect(Unit) { docs.loadHandbook() }
+    val context = LocalContext.current
 
     val part: DocPart? = docs.handbook.firstOrNull { it.key == partKey }
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = part?.label ?: "生存手册", onBack = onBack)
+            DetailHeader(title = part?.label ?: stringResource(R.string.doc_title_handbook), onBack = onBack)
             if (part == null) {
                 EmptyStateView(
-                    title = "没有找到这一篇",
-                    description = docs.handbookError ?: "手册目录可能已经更新，返回重进试试。",
+                    title = stringResource(R.string.doc_not_found),
+                    description = docs.handbookError?.format(context) ?: stringResource(R.string.doc_handbook_stale),
                     icon = {
                         Icon(
                             SeuIcons.of("book"),
@@ -260,11 +263,10 @@ fun CommunityComingSoonScreen(onBack: () -> Unit) {
     val colors = SeuTheme.colors
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = "社区", onBack = onBack)
+            DetailHeader(title = stringResource(R.string.doc_community_title), onBack = onBack)
             EmptyStateView(
-                title = "社区功能即将上线",
-                description = "发帖、点赞、评论与关注正在开发中。\n" +
-                    "现在可以先逛「资讯」「经验」和「东大生存手册」。",
+                title = stringResource(R.string.doc_community_soon),
+                description = stringResource(R.string.doc_community_soon_desc),
                 icon = {
                     Icon(
                         SeuIcons.of("person.2"),

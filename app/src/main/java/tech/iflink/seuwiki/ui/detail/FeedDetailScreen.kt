@@ -155,11 +155,11 @@ fun FeedItemDetailScreen(
     if (item == null) {
         TabPage {
             Column {
-                DetailHeader(title = "资讯", onBack = onBack)
+                DetailHeader(title = stringResource(R.string.feed_title), onBack = onBack)
                 if (isLoadingDetail) {
                     LoadingView(topPadding = 80.dp)
                 } else {
-                    EmptyStateView(title = "资讯不存在", description = "这条资讯可能已被移除")
+                    EmptyStateView(title = stringResource(R.string.feed_detail_missing), description = stringResource(R.string.feed_detail_missing_desc))
                 }
             }
         }
@@ -174,7 +174,7 @@ fun FeedItemDetailScreen(
     // 设备上实在没有浏览器时给一句话提示，而不是把 App 带走。
     val openExternal: (String) -> Unit = { url ->
         if (!context.openExternalUrl(url, colors.groupedBackground.toArgb())) {
-            scope.launch { snackbarHostState.showSnackbar("这台设备上没有可打开链接的浏览器") }
+            scope.launch { snackbarHostState.showSnackbar(context.getString(R.string.feed_no_browser)) }
         }
     }
     var showsReminderEditor by rememberSaveable { mutableStateOf(false) }
@@ -184,7 +184,7 @@ fun FeedItemDetailScreen(
     TabPage {
         Column(Modifier.fillMaxSize()) {
             DetailHeader(
-                title = detail?.originalTitle?.takeIf { it != item.title } ?: item.category.label,
+                title = detail?.originalTitle?.takeIf { it != item.title } ?: stringResource(item.category.labelRes),
                 onBack = onBack,
             )
             Column(
@@ -203,7 +203,7 @@ fun FeedItemDetailScreen(
                     Text(item.sourceName, style = SeuType.Subheadline, color = colors.secondaryLabel)
                     Text("·", style = SeuType.Subheadline, color = colors.secondaryLabel)
                     Text(
-                        text = Format.dateTime(item.publishedAt ?: System.currentTimeMillis()),
+                        text = Format.dateTime(context, item.publishedAt ?: System.currentTimeMillis()),
                         style = SeuType.Subheadline,
                         color = colors.secondaryLabel,
                     )
@@ -298,7 +298,7 @@ private fun TintPillCategory(item: FeedItem) {
             modifier = Modifier.size(13.dp),
         )
         Text(
-            text = item.category.label,
+            text = stringResource(item.category.labelRes),
             style = SeuType.CaptionMedium,
             color = colors.accent,
         )
@@ -309,6 +309,7 @@ private fun TintPillCategory(item: FeedItem) {
 @Composable
 private fun DeadlineBanner(deadline: Long) {
     val colors = SeuTheme.colors
+    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -325,15 +326,15 @@ private fun DeadlineBanner(deadline: Long) {
             modifier = Modifier.size(22.dp),
         )
         Column(Modifier.weight(1f)) {
-            Text("截止时间", style = SeuType.Caption, color = colors.secondaryLabel)
+            Text(stringResource(R.string.feed_deadline_label), style = SeuType.Caption, color = colors.secondaryLabel)
             Text(
-                text = Format.dateTime(deadline),
+                text = Format.dateTime(context, deadline),
                 style = SeuType.SubheadlineSemibold,
                 color = colors.label,
             )
         }
         Text(
-            text = Format.relative(deadline),
+            text = Format.relative(context, deadline),
             style = SeuType.CaptionMedium,
             color = colors.orange,
         )
@@ -409,7 +410,7 @@ private fun ActionBar(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                text = "在网页中打开",
+                text = stringResource(R.string.cd_open_in_browser),
                 style = SeuType.SubheadlineMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -431,7 +432,7 @@ private fun ActionBar(
             )
             Spacer(Modifier.width(6.dp))
             Text(
-                text = "设定提醒",
+                text = stringResource(R.string.feed_set_reminder),
                 style = SeuType.SubheadlineMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -495,11 +496,11 @@ private fun ReminderEditSheet(
     }
 
     val advanceOptions = listOf(
-        0 to "当天",
-        1 to "提前 1 天",
-        2 to "提前 2 天",
-        3 to "提前 3 天",
-        7 to "提前 1 周",
+        0 to stringResource(R.string.feed_advance_same_day),
+        1 to stringResource(R.string.feed_advance_1),
+        2 to stringResource(R.string.feed_advance_2),
+        3 to stringResource(R.string.feed_advance_3),
+        7 to stringResource(R.string.feed_advance_7),
     )
 
     // 提醒日 = 截止日往前推 advanceDays 天。把「提前量」直接并进截止时间展示，
@@ -548,7 +549,7 @@ private fun ReminderEditSheet(
             // 截止日期 —— Material 3 DatePicker。
             ReadOnlyField(
                 label = stringResource(R.string.reminder_due_label),
-                value = Format.dateTime(dueDate),
+                value = Format.dateTime(context, dueDate),
                 iconKey = "calendar.day.timeline.left",
                 contentDescription = stringResource(R.string.cd_reminder_channel_date),
                 onClick = { showsDatePicker = true },
@@ -596,7 +597,7 @@ private fun ReminderEditSheet(
                 // 只显示**日期** + 提醒时刻。原来用 dateTime 把截止时间自带的
                 // 时分也带上了，出来是「10月7日 1:17 1:25 提醒」这种自相矛盾的东西 ——
                 // 1:17 是创建提醒的时刻，跟提醒几点响毫无关系。
-                text = "将在 ${Format.date(reminderDay)} $fireText 提醒",
+                text = stringResource(R.string.feed_reminder_will_fire, Format.date(context, reminderDay), fireText),
                 style = SeuType.Footnote,
                 color = colors.secondaryLabel,
             )

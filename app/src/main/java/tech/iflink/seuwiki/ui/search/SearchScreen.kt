@@ -1,5 +1,8 @@
 package tech.iflink.seuwiki.ui.search
 
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringArrayResource
+import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +43,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -54,6 +58,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.design.CardColumn
 import tech.iflink.seuwiki.design.ConsoleBar
@@ -74,20 +79,31 @@ import tech.iflink.seuwiki.ui.LoadingView
 import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
 
-/** 搜索信源 — 全部, or one of the three aggregatable sources. */
-enum class SearchScope(val label: String, val symbol: String) {
-    All("全部", "magnifyingglass"),
-    Feed("通知", "newspaper"),
-    Forum("经验", "bubble.left.and.text.bubble.right"),
-    Handbook("手册", "book.closed");
+/**
+ * 搜索信源 — 全部, or one of the three aggregatable sources.
+ *
+ * [key] 是稳定标识符：它进路由（`search/list/{scope}/{keyword}`），必须稳定且与
+ * 语言无关。[labelRes] / [detailRes] 只是显示用，可以翻译。
+ *
+ * 原来这里把中文 label 直接当路由键用（`Routes.searchSourceList(scope.label, …)`，
+ * 到了 `SearchSourceListScreen` 再 `when (scope) { "通知" -> … }` 解回来）。文案一旦
+ * 抽进 strings.xml，这条路就变成「跟着设备语言走」：用户改语言后回退栈里那条路由
+ * 就再也匹配不上，页面会掉进「未知搜索范围」。所以 key 和显示名必须分开。
+ */
+enum class SearchScope(val key: String, @StringRes val labelRes: Int, val symbol: String) {
+    All("all", R.string.search_scope_all, "magnifyingglass"),
+    Feed("feed", R.string.search_scope_feed, "newspaper"),
+    Forum("forum", R.string.search_scope_forum, "bubble.left.and.text.bubble.right"),
+    Handbook("handbook", R.string.search_scope_handbook, "book.closed");
 
     /** Copy for the 「搜索范围」 explainer card on the empty state. */
-    val detail: String
+    @get:StringRes
+    val detailRes: Int
         get() = when (this) {
-            All -> ""
-            Feed -> "教务、奖助、竞赛、招聘等校园资讯"
-            Forum -> "保研、考研、留学、实习等经验帖"
-            Handbook -> "入学、选课、奖助、生活等手册条目"
+            All -> 0
+            Feed -> R.string.search_scope_feed_desc
+            Forum -> R.string.search_scope_forum_desc
+            Handbook -> R.string.search_scope_handbook_desc
         }
 
     /** The aggregated sources, in the order the sections are stacked. */
@@ -96,6 +112,10 @@ enum class SearchScope(val label: String, val symbol: String) {
             All -> listOf(Feed, Forum, Handbook)
             else -> listOf(this)
         }
+
+    companion object {
+        fun fromKey(key: String?): SearchScope? = entries.firstOrNull { it.key == key }
+    }
 }
 
 /**
@@ -132,6 +152,7 @@ fun SearchScreen(
     onOpenSourceList: (SearchScope, String) -> Unit,
 ) {
     var keyword by rememberSaveable { mutableStateOf("") }
+    val context = LocalContext.current
     var scopeKey by rememberSaveable { mutableStateOf(SearchScope.All.name) }
     val scope = SearchScope.entries.firstOrNull { it.name == scopeKey } ?: SearchScope.All
     val keyboard = LocalSoftwareKeyboardController.current
@@ -160,7 +181,7 @@ fun SearchScreen(
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            ScreenHeader(title = "搜索", onProfileClick = onOpenProfile)
+            ScreenHeader(title = stringResource(R.string.search_title), onProfileClick = onOpenProfile)
             SearchField(
                 keyword = keyword,
                 onKeywordChange = { keyword = it },
@@ -170,7 +191,7 @@ fun SearchScreen(
                 items = SearchScope.entries.toList(),
                 selection = scope,
                 onSelect = { scopeKey = it.name },
-                title = { it.label },
+                title = { stringResource(it.labelRes) },
             )
 
             when {
@@ -185,8 +206,11 @@ fun SearchScreen(
                 // 之前两者都静默回退到本地假数据，用户根本分不清是网断了还是没命中。
                 result.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
-                        title = "搜索失败",
-                        description = "${result.error}\n检查网络后再试一次。",
+                        title = stringResource(R.string.search_failed),
+                        description = stringResource(
+                        R.string.search_failed_desc,
+                        result.error?.format(context).orEmpty(),
+                    ),
                         icon = {
                             Icon(
                                 imageVector = SeuIcons.Search,
@@ -197,7 +221,7 @@ fun SearchScreen(
                         },
                     )
                     Text(
-                        text = "重试",
+                        text = stringResource(R.string.search_retry),
                         style = SeuType.SubheadlineSemibold,
                         color = SeuTheme.colors.accent,
                         modifier = Modifier
@@ -213,8 +237,8 @@ fun SearchScreen(
                 // 「搜过、没报错、0 命中」——这是真正的空结果。
                 results.isEmpty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
-                        title = "未找到“$keyword”",
-                        description = "换个关键词试试，试试「保研」「转专业」这类词。",
+                        title = stringResource(R.string.search_not_found, keyword),
+                        description = stringResource(R.string.search_not_found_desc),
                         icon = {
                             Icon(
                                 imageVector = SeuIcons.Search,
@@ -311,7 +335,7 @@ private fun SearchField(
         Box(Modifier.weight(1f)) {
             if (keyword.isEmpty()) {
                 Text(
-                    text = "搜索通知、经验、手册",
+                    text = stringResource(R.string.search_placeholder),
                     style = SeuType.Callout,
                     color = colors.secondaryLabel,
                 )
@@ -337,10 +361,7 @@ private fun SearchField(
 @Composable
 private fun SearchSuggestions(onSelectWord: (String) -> Unit, modifier: Modifier = Modifier) {
     val colors = SeuTheme.colors
-    val hotWords = listOf(
-        "保研", "SRTP", "奖学金", "转专业", "数学建模", "秋招",
-        "交换", "选课", "图书馆", "食堂", "班车", "校园卡",
-    )
+    val hotWords = stringArrayResource(R.array.search_hot_keywords)
     LazyColumn(
         modifier = modifier,
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = ListBottomPadding),
@@ -348,7 +369,7 @@ private fun SearchSuggestions(onSelectWord: (String) -> Unit, modifier: Modifier
     ) {
         item {
             CardColumn(spacing = 12.dp) {
-                ExplainLabel("热门搜索", "flame.fill", colors.orange)
+                ExplainLabel(stringResource(R.string.search_hot_label), "flame.fill", colors.orange)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     hotWords.forEach { word ->
                         Text(
@@ -367,7 +388,7 @@ private fun SearchSuggestions(onSelectWord: (String) -> Unit, modifier: Modifier
         }
         item {
             CardColumn(spacing = 12.dp) {
-                ExplainLabel("搜索范围", "square.stack.3d.up.fill", colors.accent)
+                ExplainLabel(stringResource(R.string.search_scope_label), "square.stack.3d.up.fill", colors.accent)
                 listOf(SearchScope.Feed, SearchScope.Forum, SearchScope.Handbook).forEach { source ->
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -383,9 +404,9 @@ private fun SearchSuggestions(onSelectWord: (String) -> Unit, modifier: Modifier
                             )
                         }
                         Column {
-                            Text(source.label, style = SeuType.SubheadlineMedium, color = colors.label)
+                            Text(stringResource(source.labelRes), style = SeuType.SubheadlineMedium, color = colors.label)
                             Text(
-                                text = source.detail,
+                                text = if (source.detailRes != 0) stringResource(source.detailRes) else "",
                                 style = SeuType.Caption,
                                 color = colors.secondaryLabel,
                             )
@@ -537,10 +558,10 @@ private fun SearchSectionCard(
                     modifier = Modifier.size(16.dp),
                 )
             }
-            Text(scope.label, style = SeuType.Headline, color = colors.label)
+            Text(stringResource(scope.labelRes), style = SeuType.Headline, color = colors.label)
             Spacer(Modifier.weight(1f))
             Text(
-                text = "$count 条结果",
+                text = stringResource(R.string.search_result_count, count),
                 style = SeuType.Caption,
                 color = colors.secondaryLabel,
             )
@@ -549,7 +570,7 @@ private fun SearchSectionCard(
         content()
         InsetDivider(leading = 14.dp)
         Text(
-            text = "查看更多",
+            text = stringResource(R.string.view_all),
             style = SeuType.SubheadlineMedium,
             color = colors.accent,
             modifier = Modifier
@@ -650,7 +671,7 @@ private fun SearchDocResultRow(
             )
             doc.anchor?.let {
                 Text(
-                    text = "命中本节：${highlightMatches(it.text.trim(), keyword)}",
+                    text = stringResource(R.string.list_hit_section, highlightMatches(it.text.trim(), keyword)),
                     style = SeuType.Caption,
                     color = colors.accent,
                     maxLines = 2,

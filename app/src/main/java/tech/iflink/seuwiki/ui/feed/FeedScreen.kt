@@ -1,5 +1,7 @@
 package tech.iflink.seuwiki.ui.feed
 
+import androidx.compose.ui.res.stringArrayResource
+import androidx.annotation.StringRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,8 +47,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.data.toFeedProfile
@@ -67,18 +71,20 @@ import tech.iflink.seuwiki.ui.rows.ForYouCard
 
 /** 资讯 console scope — 为你精选 / 全部 / the 8 categories. */
 sealed interface FeedScope {
-    val title: String
+    /** 显示名走资源，编译器保证 key 存在，不会静默渲染成空白胶囊。 */
+    @get:StringRes
+    val titleRes: Int
 
     data object ForYou : FeedScope {
-        override val title = "为你精选"
+        override val titleRes = R.string.feed_scope_for_you
     }
 
     data object All : FeedScope {
-        override val title = "全部"
+        override val titleRes = R.string.feed_filter_all
     }
 
     data class Category(val category: FeedCategory) : FeedScope {
-        override val title: String get() = category.label
+        override val titleRes: Int get() = category.labelRes
     }
 
     companion object {
@@ -162,7 +168,7 @@ fun FeedScreen(
     TabPage {
         Column(Modifier.fillMaxSize()) {
             ScreenHeader(
-                title = "资讯",
+                title = stringResource(R.string.feed_title),
                 onProfileClick = onOpenProfile,
                 trailing = {
                     AnimatedVisibility(visible = scope == FeedScope.All) {
@@ -182,11 +188,11 @@ fun FeedScreen(
                                         "line.3.horizontal.decrease.circle"
                                     },
                                 ),
-                                contentDescription = "筛选",
+                                contentDescription = stringResource(R.string.cd_filter),
                                 tint = SeuTheme.colors.accent,
                                 modifier = Modifier.size(20.dp),
                             )
-                            Text("筛选", style = SeuType.Subheadline, color = SeuTheme.colors.accent)
+                            Text(stringResource(R.string.feed_filter), style = SeuType.Subheadline, color = SeuTheme.colors.accent)
                         }
                     }
                 },
@@ -196,7 +202,7 @@ fun FeedScreen(
                 items = FeedScope.scopes,
                 selection = scope,
                 onSelect = { scopeKey = FeedScope.key(it) },
-                title = { it.title },
+                title = { stringResource(it.titleRes) },
             )
 
             // 筛选只在「全部」下生效，与 SwiftUI 的 allItems 一致。
@@ -207,9 +213,9 @@ fun FeedScreen(
             }
             val emptyMessage = when (scope) {
                 FeedScope.All ->
-                    if (filter.isActive) "没有符合条件的资讯，试试调整筛选条件" else "暂无资讯"
-                is FeedScope.Category -> "该分类暂无资讯"
-                FeedScope.ForYou -> "暂时没有为你精选的资讯"
+                    if (filter.isActive) stringResource(R.string.feed_empty_filtered) else stringResource(R.string.feed_empty)
+                is FeedScope.Category -> stringResource(R.string.feed_empty_category)
+                FeedScope.ForYou -> stringResource(R.string.feed_empty_for_you)
             }
 
             if (visible.isEmpty() && page.isLoading) {
@@ -217,7 +223,7 @@ fun FeedScreen(
             } else if (visible.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
-                        title = "暂无资讯",
+                        title = stringResource(R.string.feed_empty),
                         description = emptyMessage,
                         icon = {
                             Icon(
@@ -326,10 +332,10 @@ private fun FeedFilterSheet(
                     .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text("筛选", style = SeuType.Title3, color = colors.label)
+                Text(stringResource(R.string.feed_filter), style = SeuType.Title3, color = colors.label)
                 Spacer(Modifier.weight(1f))
                 Text(
-                    text = "完成",
+                    text = stringResource(R.string.feed_filter_done),
                     style = SeuType.SubheadlineMedium,
                     color = colors.accent,
                     modifier = Modifier
@@ -348,13 +354,13 @@ private fun FeedFilterSheet(
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp),
             ) {
-                FilterSectionTitle("学院")
+                FilterSectionTitle(stringResource(R.string.feed_filter_college))
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        "只看我的学院",
+                        stringResource(R.string.feed_filter_only_my_college),
                         style = SeuType.Body,
                         color = colors.label,
                         modifier = Modifier.weight(1f),
@@ -374,24 +380,24 @@ private fun FeedFilterSheet(
                     )
                 }
 
-                FilterSectionTitle("学段")
+                FilterSectionTitle(stringResource(R.string.feed_filter_degree))
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    FilterChip("全部", filter.degree == null) {
+                    FilterChip(stringResource(R.string.feed_filter_all), filter.degree == null) {
                         onChange(filter.copy(degree = null))
                     }
-                    listOf("本科生", "硕士生", "博士生").forEach { degree ->
+                    stringArrayResource(R.array.feed_filter_degrees).forEach { degree ->
                         FilterChip(degree, filter.degree == degree) {
                             onChange(filter.copy(degree = degree))
                         }
                     }
                 }
 
-                FilterSectionTitle("分类")
+                FilterSectionTitle(stringResource(R.string.feed_filter_category))
                 FeedCategory.all.forEach { category ->
                     val checked = category in filter.categories
                     Row(
@@ -420,7 +426,7 @@ private fun FeedFilterSheet(
                             modifier = Modifier.size(19.dp),
                         )
                         Text(
-                            text = category.label,
+                            text = stringResource(category.labelRes),
                             style = SeuType.Body,
                             color = colors.label,
                             modifier = Modifier.weight(1f),
@@ -439,7 +445,7 @@ private fun FeedFilterSheet(
                 if (filter.isActive) {
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        text = "清除全部筛选",
+                        text = stringResource(R.string.feed_filter_clear),
                         style = SeuType.Body,
                         color = colors.red,
                         modifier = Modifier
@@ -531,7 +537,7 @@ private fun FeedOfflineBanner() {
         )
         Spacer(Modifier.width(5.dp))
         Text(
-            text = "暂时无法连接服务器，显示离线示例内容",
+            text = stringResource(R.string.feed_offline_banner),
             style = SeuType.Caption,
             color = colors.secondaryLabel,
         )

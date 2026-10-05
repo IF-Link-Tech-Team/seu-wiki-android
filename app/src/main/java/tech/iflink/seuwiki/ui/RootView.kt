@@ -1,5 +1,7 @@
 package tech.iflink.seuwiki.ui
 
+import androidx.compose.ui.res.stringResource
+import androidx.annotation.StringRes
 import android.net.Uri
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -46,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.LaunchedEffect
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.ReminderReceiver
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -81,15 +84,16 @@ import tech.iflink.seuwiki.ui.tools.ToolsScreen
 
 /** The five tabs, in the order the SwiftUI `TabView` declares them. */
 enum class AppTab(
-    val label: String,
+    @get:StringRes
+    val labelRes: Int,
     val icon: ImageVector,
     val route: String,
 ) {
-    Home("主页", SeuIcons.Home, "home"),
-    Feed("资讯", SeuIcons.Feed, "feed"),
-    Experience("经验", SeuIcons.Experience, "experience"),
-    Tools("工具", SeuIcons.Tools, "tools"),
-    Search("搜索", SeuIcons.Search, "search");
+    Home(R.string.nav_home, SeuIcons.Home, "home"),
+    Feed(R.string.nav_feed, SeuIcons.Feed, "feed"),
+    Experience(R.string.nav_experience, SeuIcons.Experience, "experience"),
+    Tools(R.string.nav_tools, SeuIcons.Tools, "tools"),
+    Search(R.string.nav_search, SeuIcons.Search, "search");
 }
 
 /**
@@ -283,7 +287,7 @@ fun RootView(
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
                     onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                     onOpenSourceList = { scope, keyword ->
-                        navController.navigate(Routes.searchSourceList(scope.label, keyword))
+                        navController.navigate(Routes.searchSourceList(scope.key, keyword))
                     },
                 )
             }
@@ -371,7 +375,7 @@ fun RootView(
                 ),
             ) { entry ->
                 SearchSourceListScreen(
-                    scope = Routes.decode(entry.arguments?.getString("scope")),
+                    scopeKey = Routes.decode(entry.arguments?.getString("scope")),
                     keyword = Routes.decode(entry.arguments?.getString("keyword")),
                     onBack = { navController.popBackStack() },
                     docs = docsStore,
@@ -601,13 +605,13 @@ private fun TabItem(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Icon(
                     imageVector = tab.icon,
-                    contentDescription = tab.label,
+                    contentDescription = stringResource(tab.labelRes),
                     tint = tint,
                     modifier = Modifier.size(24.dp),
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = tab.label,
+                    text = stringResource(tab.labelRes),
                     style = SeuType.TabLabel,
                     color = tint,
                     maxLines = 1,

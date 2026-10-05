@@ -32,7 +32,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.design.GroupedBackground
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
@@ -109,7 +111,7 @@ fun ProfileButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     ) {
         Icon(
             imageVector = Icons.Filled.Person,
-            contentDescription = "个人页",
+            contentDescription = stringResource(R.string.cd_profile),
             tint = colors.label,
             modifier = Modifier.size(22.dp),
         )
@@ -278,7 +280,7 @@ fun DetailHeader(
             ) {
                 Icon(
                     imageVector = SeuIcons.of("chevron.left"),
-                    contentDescription = "返回",
+                    contentDescription = stringResource(R.string.cd_back),
                     tint = colors.label,
                     modifier = Modifier.size(17.dp),
                 )

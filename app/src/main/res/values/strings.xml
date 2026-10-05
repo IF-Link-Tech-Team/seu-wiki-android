@@ -2,11 +2,386 @@
 <resources>
     <string name="app_name">SEU.wiki</string>
 
-    <!-- 本地提醒通知渠道 -->
+    <!--
+      界面文案集中在这里。规范：
+      - 凡是会显示给用户的文字都必须在 strings.xml，代码里只留 R.string.xxx。
+      - 专有名词（学院名、Logto、IF.Link、SEU.wiki）同样入表，便于日后整体翻译。
+      - 后端镜像的内容数据（TopicCatalog 的 8 个话题 / 29 个子标签）**不入表**，
+        它们的取值必须与 seu-forum 的 catalog.mjs 一致，翻译会破坏与后端的对应关系。
+      - 带参数的文案一律用 %1$s / %2$d 位置参数，禁止字符串拼接。
+    -->
+
+    <!-- ============ 通用导航与无障碍 ============ -->
+    <string name="nav_home">主页</string>
+    <string name="nav_feed">资讯</string>
+    <string name="nav_experience">经验</string>
+    <string name="nav_tools">工具</string>
+    <string name="nav_search">搜索</string>
+    <string name="view_all">查看全部</string>
+
+    <string name="cd_back">返回</string>
+    <string name="cd_profile">个人页</string>
+    <string name="cd_filter">筛选</string>
+    <string name="cd_open_in_browser">在网页中打开</string>
+    <string name="cd_refresh">刷新</string>
+    <string name="cd_delete_course">删除课程</string>
+    <string name="cd_reminder_channel_date">选择截止日期</string>
+    <string name="cd_reminder_channel_time">选择提醒时刻</string>
+
+    <!-- ============ 时间与日期（Format.kt） ============ -->
+    <!--
+      刻意保持确定性中文输出，不跟随系统语言：iOS 侧用的是 SwiftUI 的
+      Text(date, style: .relative)，在英文模拟器上会渲染成 "5 days, 10 hr"，
+      两端读数就不一致了。等真正做多语言时，这里应改走
+      DateUtils / DateFormat 跟随设备 locale。
+      数字用 %d 输出，Android 资源格式化固定按 Locale.CHinese，不会出现阿拉伯数字。
+    -->
+    <string name="time_just_now">刚刚</string>
+    <string name="time_minutes">%1$d 分钟</string>
+    <string name="time_hours">%1$d 小时</string>
+    <string name="time_days">%1$d 天</string>
+    <string name="time_months">%1$d 个月</string>
+    <string name="time_years">%1$d 年</string>
+    <string name="time_before">%1$s前</string>
+    <string name="time_after">%1$s后</string>
+    <string name="date_full">%1$d年%2$d月%3$d日</string>
+    <string name="date_time_short">%1$d月%2$d日 %3$d:%4$02d</string>
+
+    <string-array name="weekday_titles">
+        <item>周一</item>
+        <item>周二</item>
+        <item>周三</item>
+        <item>周四</item>
+        <item>周五</item>
+        <item>周六</item>
+        <item>周日</item>
+    </string-array>
+
+    <!-- ============ 主页 ============ -->
+    <string name="home_card_reminder">提醒</string>
+    <string name="home_card_next_class">下一节课</string>
+    <string name="home_empty_reminder">暂无提醒</string>
+    <string name="home_empty_reminder_hint">在资讯详情页可设定提醒</string>
+    <string name="home_empty_class">今天没课了</string>
+    <string name="home_empty_class_hint">去工具页查看完整课表</string>
+    <string name="home_section_related_feed">与我有关的通知</string>
+    <string name="home_section_experience">经验长文</string>
+    <string name="days_left">%1$d 天</string>
+    <string name="today">今天</string>
+
+    <!-- ============ 资讯 ============ -->
+    <string name="feed_title">资讯</string>
+    <string name="feed_scope_for_you">为你精选</string>
+    <string name="feed_filter">筛选</string>
+    <string name="feed_filter_done">完成</string>
+    <string name="feed_filter_college">学院</string>
+    <string name="feed_filter_only_my_college">只看我的学院</string>
+    <string name="feed_filter_degree">学段</string>
+    <string name="feed_filter_degree_undergrad">本科生</string>
+    <string name="feed_filter_degree_master">硕士生</string>
+    <string name="feed_filter_degree_doctor">博士生</string>
+    <string name="feed_filter_all">全部</string>
+    <string name="feed_filter_category">分类</string>
+    <string name="feed_filter_clear">清除全部筛选</string>
+    <string name="feed_empty_filtered">没有符合条件的资讯，试试调整筛选条件</string>
+    <string name="feed_empty">暂无资讯</string>
+    <string name="feed_empty_category">该分类暂无资讯</string>
+    <string name="feed_empty_for_you">暂时没有为你精选的资讯</string>
+    <!--
+      诚实口径：网络失败时只保留已经加载到的内容，并没有「离线示例内容」——
+      MockData 早已删除，原文案在删 Mock 之后就是错的。措辞对齐 iOS
+      FeedHomeView 的「暂时无法连接服务器」。
+    -->
+    <string name="feed_offline_banner">暂时无法连接服务器，下面是已加载的内容</string>
+
+    <!--
+      学段筛选项。显示文本与 FeedFilter.degree 的匹配值必须同源：
+      筛选是把这里的字符串拿去和后端 item.audience.degrees 比对，
+      一旦两边分了家，筛选项就会静默地一个都匹配不上。
+    -->
+    <string-array name="feed_filter_degrees">
+        <item>本科生</item>
+        <item>硕士生</item>
+        <item>博士生</item>
+    </string-array>
+
+    <string name="feed_category_academic">教务</string>
+    <string name="feed_category_aid">奖助</string>
+    <string name="feed_category_competition">竞赛科研</string>
+    <string name="feed_category_exchange">交流升学</string>
+    <string name="feed_category_career">实习就业</string>
+    <string name="feed_category_club">社团活动</string>
+    <string name="feed_category_life">生活服务</string>
+    <string name="feed_category_news">校园新闻</string>
+
+    <!-- ============ 资讯详情 ============ -->
+    <string name="feed_detail_missing">资讯不存在</string>
+    <string name="feed_detail_missing_desc">这条资讯可能已被移除</string>
+    <string name="feed_no_browser">这台设备上没有可打开链接的浏览器</string>
+    <string name="feed_deadline_label">截止时间</string>
+    <string name="feed_set_reminder">设定提醒</string>
+    <string name="feed_advance_same_day">当天</string>
+    <string name="feed_advance_1">提前 1 天</string>
+    <string name="feed_advance_2">提前 2 天</string>
+    <string name="feed_advance_3">提前 3 天</string>
+    <string name="feed_advance_7">提前 1 周</string>
+    <string name="feed_reminder_will_fire">将在 %1$s %2$s 提醒</string>
+
+    <!-- ============ 经验 ============ -->
+    <string name="experience_title">经验</string>
+    <string name="experience_empty">还没有经验长文</string>
+    <string name="experience_empty_desc">「社区」功能即将上线，经验长文会持续补充。</string>
+    <string name="experience_filter_title">按场景、年级、学院筛选</string>
+    <string name="experience_filter_clear">清除筛选</string>
+    <string name="experience_filter_empty">这个组合下暂时没有内容</string>
+    <string name="experience_filter_empty_desc">换一个场景或年级再看看。</string>
+    <string name="experience_handbook_unavailable">生存手册加载中或暂时不可用</string>
+    <string name="experience_handbook_retry">下拉或重新进入即可重试。</string>
+    <string name="experience_count">%1$d 条</string>
+    <string name="experience_coming_soon">社区功能即将上线</string>
+    <string name="experience_coming_soon_desc">关注、发帖、点赞与评论正在开发中。\n现在可以先逛逛「热门」和「东大生存手册」。</string>
+
+    <!-- 经验子页 console -->
+    <string name="experience_tab_hot">热门</string>
+    <string name="experience_tab_topics">话题</string>
+    <string name="experience_tab_handbook">生存手册</string>
+    <string name="experience_tab_following">关注</string>
+
+    <!-- ============ 文档 / 手册 ============ -->
+    <string name="doc_kind_survival">生存手册</string>
+    <string name="doc_kind_experience">经验</string>
+    <string name="doc_title">手册</string>
+    <string name="doc_title_handbook">生存手册</string>
+    <string name="doc_load_failed">加载失败：%1$s</string>
+    <string name="docs_handbook_failed">生存手册加载失败：%1$s</string>
+    <string name="docs_experience_failed">经验加载失败：%1$s</string>
+    <string name="docs_search_failed">搜索失败：%1$s</string>
+    <string name="doc_network_error">网络异常</string>
+    <string name="doc_load_error_title">这条内容没能加载出来</string>
+    <string name="doc_jump_to_section">从搜索定位到本节：%1$s</string>
+    <string name="doc_outline">目录</string>
+    <string name="doc_body">正文</string>
+    <string name="doc_no_body">这条内容暂时没有正文。</string>
+    <string name="doc_view_original">查看原文 →</string>
+    <string name="doc_not_found">没有找到这一篇</string>
+    <string name="doc_handbook_stale">手册目录可能已经更新，返回重进试试。</string>
+    <string name="doc_community_title">社区</string>
+    <string name="doc_community_soon">社区功能即将上线</string>
+    <string name="doc_community_soon_desc">发帖、点赞、评论与关注正在开发中。\n现在可以先逛「资讯」「经验」和「东大生存手册」。</string>
+
+    <!-- ============ 列表页（与我有关系 / 经验长文 / 搜索结果） ============ -->
+    <string name="list_related_title">与我有关</string>
+    <string name="list_experience_title">经验长文</string>
+    <string name="list_search_failed">搜索失败</string>
+    <string name="list_unknown_scope">未知搜索范围：%1$s</string>
+    <string name="list_hit_section">命中本节：%1$s</string>
+    <string name="section_entry_count">%1$d 篇条目</string>
+    <string name="row_featured">精选</string>
+
+    <!-- ============ 搜索 ============ -->
+    <string name="search_title">搜索</string>
+    <string name="search_scope_all">全部</string>
+    <string name="search_scope_feed">通知</string>
+    <string name="search_scope_forum">经验</string>
+    <string name="search_scope_handbook">手册</string>
+    <string name="search_scope_feed_desc">教务、奖助、竞赛、招聘等校园资讯</string>
+    <string name="search_scope_forum_desc">保研、考研、留学、实习等经验帖</string>
+    <string name="search_scope_handbook_desc">入学、选课、奖助、生活等手册条目</string>
+    <string name="search_failed">搜索失败</string>
+    <string name="search_failed_desc">%1$s\n检查网络后再试一次。</string>
+    <string name="search_retry">重试</string>
+    <string name="search_not_found">未找到“%1$s”</string>
+    <string name="search_not_found_desc">换个关键词试试，试试「保研」「转专业」这类词。</string>
+    <string name="search_placeholder">搜索通知、经验、手册</string>
+    <string name="search_hot_label">热门搜索</string>
+    <string name="search_scope_label">搜索范围</string>
+    <string name="search_result_count">%1$d 条结果</string>
+
+    <!-- ============ 工具 ============ -->
+    <string name="tools_title">工具</string>
+    <string name="tools_today_classes">今日 %1$d 节课</string>
+    <string name="tools_today_no_class">今日无课</string>
+    <string name="tools_coming_soon">即将推出</string>
+    <string name="tool_placeholder_desc">%1$s · 功能开发中，敬请期待</string>
+    <string name="tool_not_found">找不到该工具</string>
+    <string name="tool_not_found_desc">请返回工具页重新选择</string>
+
+    <string name="tool_timetable">课表</string>
+    <string name="tool_gpa">绩点计算</string>
+    <string name="tool_exam">考试安排</string>
+    <string name="tool_library">图书馆</string>
+    <string name="tool_card">校园卡</string>
+    <string name="tool_bus">班车查询</string>
+    <string name="tool_map">校园地图</string>
+    <string name="tool_elective">选课助手</string>
+    <string name="tool_timetable_sub">今日课程与周视图</string>
+    <string name="tool_gpa_sub">五分制换算</string>
+    <string name="tool_exam_sub">期末倒计时</string>
+    <string name="tool_library_sub">借阅与研讨间</string>
+    <string name="tool_card_sub">余额与流水</string>
+    <string name="tool_bus_sub">三校区通勤</string>
+    <string name="tool_map_sub">楼宇导航</string>
+    <string name="tool_elective_sub">避雷与推荐</string>
+
+    <!-- ============ 课表 ============ -->
+    <string name="timetable_title">课表</string>
+    <string name="timetable_back_to_today">回到今天</string>
+    <string name="timetable_empty_today">今天没课</string>
+    <string name="timetable_empty_other">这天没课</string>
+    <string name="timetable_empty_desc">好好休息，或切换到其他日期查看</string>
+    <string name="timetable_class_count">%1$d 节课</string>
+    <string name="timetable_date_line">%1$d月%2$d日 · %3$s</string>
+
+    <!-- ============ 绩点计算 ============ -->
+    <string name="gpa_title">绩点计算</string>
+    <string name="gpa_empty">还没有课程</string>
+    <string name="gpa_empty_desc">添加课程的成绩与学分，自动按五分制换算绩点</string>
+    <string name="gpa_add_course">添加课程</string>
+    <string name="gpa_section_courses">课程</string>
+    <string name="gpa_weighted">加权平均绩点</string>
+    <string name="gpa_total_credits">总学分</string>
+    <string name="gpa_weighted_score">加权平均分</string>
+    <string name="gpa_counted_courses">%1$d 门</string>
+    <string name="gpa_counted_courses_label">计入课程</string>
+    <string name="gpa_name_placeholder">课程名称（选填）</string>
+    <string name="gpa_credits_label">学分</string>
+    <string name="gpa_credits_placeholder">如 3.0</string>
+    <string name="gpa_score_label">成绩</string>
+    <string name="gpa_column_label">绩点</string>
+    <string name="gpa_score_error">成绩需在 0–100 之间</string>
+    <string name="gpa_credits_error">学分需大于 0</string>
+    <string name="gpa_convert_title">五分制换算</string>
+    <string name="gpa_convert_desc">换算规则依据 app 内手册「绩点计算规则」：90–100 为 5.0，此后每 5 分一档递减 0.5，60 以下为 0。未检索到东南大学官方公开的换算文件，此处为假设规则，实际以教务处最新规定为准。</string>
+    <string name="gpa_band_below_60">60 以下</string>
+
+    <!-- ============ 个人页 ============ -->
+    <string name="profile_title">个人页</string>
+    <string name="profile_not_logged_in">未登录</string>
+    <string name="profile_login_hint">登录 IF.Link 账号，同步收藏、提醒与关注的话题</string>
+    <string name="profile_logging_in">正在登录…</string>
+    <string name="profile_login">登录 IF.Link 账号</string>
+    <string name="profile_login_unconfigured">登录服务配置中</string>
+    <string name="profile_login_failed">登录失败：%1$s</string>
+    <string name="profile_login_missing_code">登录回调缺少 code</string>
+    <string name="profile_login_session_expired">登录会话已失效，请重试</string>
+    <string name="profile_login_state_mismatch">state 校验失败，已中止登录</string>
+    <string name="profile_default_display_name">IF.Link 用户</string>
+    <string name="profile_token_missing_access">token 响应缺少 access_token</string>
+    <string name="profile_sign_out">退出登录</string>
+    <string name="profile_section_persona">我的画像</string>
+    <string name="profile_college">学院</string>
+    <string name="profile_degree">学段</string>
+    <string name="profile_grade">年级</string>
+    <string name="profile_interests">兴趣标签</string>
+    <string name="profile_persona_note">画像用于主页「为你推荐」匹配，未登录也可编辑。</string>
+    <string name="profile_section_following">关注的话题</string>
+    <string name="profile_empty_following">暂无关注，去论坛话题页看看</string>
+    <string name="profile_section_reminders">我的提醒</string>
+    <string name="profile_empty_reminders">暂无提醒，可在资讯详情页设定</string>
+    <string name="profile_reminder_row">%1$s 截止 · 提前 %2$d 天提醒</string>
+    <string name="profile_days_left">剩 %1$d 天</string>
+    <string name="profile_reset_defaults">恢复默认设置</string>
+    <string name="profile_section_about">关于 SEU.wiki</string>
+    <string name="profile_about_tagline">东南大学校园资讯与经验社区</string>
+    <string name="profile_about_version_label">版本</string>
+    <string name="profile_about_version">0.1.0</string>
+    <string name="profile_about_build_label">构建</string>
+    <string name="profile_about_build">本地开发版</string>
+    <string name="profile_about_ecosystem_label">生态</string>
+    <string name="profile_about_ecosystem">IF.Link</string>
+    <string name="profile_about_logto">登录服务由自部署 Logto（auth.iflink.tech）提供。</string>
+
+    <string-array name="profile_degrees">
+        <item>本科</item>
+        <item>硕士</item>
+        <item>博士</item>
+    </string-array>
+
+    <string-array name="profile_grades_undergrad">
+        <item>大一</item>
+        <item>大二</item>
+        <item>大三</item>
+        <item>大四</item>
+        <item>大五</item>
+    </string-array>
+
+    <string-array name="profile_grades_grad">
+        <item>研一</item>
+        <item>研二</item>
+        <item>研三</item>
+    </string-array>
+
+    <string-array name="profile_grades_doctor">
+        <item>博一</item>
+        <item>博二</item>
+        <item>博三</item>
+        <item>博四</item>
+        <item>博五</item>
+    </string-array>
+
+    <string-array name="profile_interest_tags">
+        <item>保研</item>
+        <item>考研</item>
+        <item>留学</item>
+        <item>SRTP</item>
+        <item>数学建模</item>
+        <item>竞赛</item>
+        <item>实习</item>
+        <item>校园生活</item>
+    </string-array>
+
+    <string-array name="seu_colleges">
+        <item>建筑学院</item>
+        <item>机械工程学院</item>
+        <item>能源与环境学院</item>
+        <item>信息科学与工程学院</item>
+        <item>土木工程学院</item>
+        <item>电子科学与工程学院</item>
+        <item>数学学院</item>
+        <item>自动化学院</item>
+        <item>计算机科学与工程学院</item>
+        <item>软件学院</item>
+        <item>集成电路学院</item>
+        <item>网络空间安全学院</item>
+        <item>物理学院</item>
+        <item>化学化工学院</item>
+        <item>经济管理学院</item>
+        <item>电气工程学院</item>
+        <item>外国语学院</item>
+        <item>交通学院</item>
+        <item>仪器科学与工程学院</item>
+        <item>材料科学与工程学院</item>
+        <item>生物科学与医学工程学院</item>
+        <item>生命科学与技术学院</item>
+        <item>医学院</item>
+        <item>公共卫生学院</item>
+        <item>法学院</item>
+        <item>人文学院</item>
+        <item>艺术学院</item>
+        <item>体育系</item>
+    </string-array>
+
+    <!-- ============ 搜索热词 ============ -->
+    <string-array name="search_hot_keywords">
+        <item>保研</item>
+        <item>SRTP</item>
+        <item>奖学金</item>
+        <item>转专业</item>
+        <item>数学建模</item>
+        <item>秋招</item>
+        <item>交换</item>
+        <item>选课</item>
+        <item>图书馆</item>
+        <item>食堂</item>
+        <item>班车</item>
+        <item>校园卡</item>
+    </string-array>
+
+    <!-- ============ 本地提醒通知渠道 ============ -->
     <string name="reminder_channel_name">提醒</string>
     <string name="reminder_channel_description">你在资讯详情里设定的截止提醒</string>
 
-    <!-- 提醒设置 -->
+    <!-- ============ 提醒设置 ============ -->
     <string name="reminder_title_label">标题</string>
     <string name="reminder_note_label">备注</string>
     <string name="reminder_due_label">截止时间</string>
@@ -26,12 +401,4 @@
     <string name="reminder_schedule_past">这个时间点已经过去，没有排上提醒</string>
     <string name="reminder_deleted">已删除提醒</string>
     <string name="reminder_delete">删除提醒</string>
-
-    <string name="cd_reminder_channel_date">选择截止日期</string>
-    <string name="cd_reminder_channel_time">选择提醒时刻</string>
-    <string name="cd_back">返回</string>
-    <string name="cd_profile">个人页</string>
-    <string name="cd_filter">筛选</string>
-    <string name="cd_open_in_browser">在网页中打开</string>
-    <string name="cd_refresh">刷新</string>
 </resources>

@@ -1,5 +1,7 @@
 package tech.iflink.seuwiki.ui.detail
 
+import tech.iflink.seuwiki.ui.search.SearchScope
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,9 +19,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.design.CardColumn
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
@@ -45,11 +49,12 @@ fun HomeFeedListScreen(
     onBack: () -> Unit,
     onOpenItem: (String) -> Unit,
 ) {
-    DetailListPage(title = "与我有关", onBack = onBack) {
+    val context = LocalContext.current
+    DetailListPage(title = stringResource(R.string.list_related_title), onBack = onBack) {
         items(items, key = { it.id }) { item ->
             CompactListRow(
                 title = item.title,
-                meta = "${item.sourceName} · ${Format.relative(item.publishedAt)}",
+                meta = "${item.sourceName} · ${Format.relative(context, item.publishedAt)}",
                 onClick = { onOpenItem(item.id) },
             )
         }
@@ -70,12 +75,12 @@ fun HomeExperienceListScreen(
     onOpenEntry: (String) -> Unit,
 ) {
     LaunchedEffect(Unit) { docs.loadExperience() }
-    DetailListPage(title = "经验长文", onBack = onBack) {
+    DetailListPage(title = stringResource(R.string.list_experience_title), onBack = onBack) {
         items(docs.experience, key = { it.slug }) { entry ->
             CompactListRow(
                 title = entry.title,
                 meta = listOfNotNull(entry.part, entry.category, entry.author)
-                    .take(2).joinToString(" · ").ifEmpty { "经验长文" },
+                    .take(2).joinToString(" · ").ifEmpty { stringResource(R.string.list_experience_title) },
                 onClick = { onOpenEntry(entry.slug) },
             )
         }
@@ -86,9 +91,10 @@ fun HomeExperienceListScreen(
  * 单信源搜索结果.
  *
  * Port of `SearchSourceListView`: the destination of a `SearchSectionCard`'s
- * 「查看更多」, and the inline form the ConsoleBar scopes reuse. [scope] is the
- * raw Chinese source name — 「通知」, 「经验」 or 「手册」 — so a caller can hand
- * `SearchScope.label` straight through without a translation table.
+ * 「查看更多」, and the inline form the ConsoleBar scopes reuse. [scopeKey] is a
+ * `SearchScope.key` handed straight through from the route — a stable ASCII
+ * identifier, never the localized display name, so a device-language change can
+ * never orphan a route already sitting on the back stack.
  *
  * Each scope keeps the Swift `SearchEngine` filter, the `SearchResultRows` meta
  * line, and that row type's keyword emphasis.
@@ -96,12 +102,16 @@ fun HomeExperienceListScreen(
 @Composable
 fun SearchSourceListScreen(
     docs: DocsStore,
-    scope: String,
+    scopeKey: String,
     keyword: String,
     onBack: () -> Unit,
     onOpenFeed: (String) -> Unit,
     onOpenEntry: (String) -> Unit,
 ) {
+    val context = LocalContext.current
+    // 路由带进来的是 SearchScope.key（稳定的 ASCII 标识符），显示名才从资源取。
+    val scope = SearchScope.fromKey(scopeKey)
+    val scopeTitle = scope?.let { stringResource(it.labelRes) } ?: scopeKey
     val key = keyword.trim()
     var error by remember(key) { mutableStateOf<String?>(null) }
 
@@ -112,23 +122,23 @@ fun SearchSourceListScreen(
         if (key.isEmpty()) return@LaunchedEffect
         runCatching { docs.search(key) }
             .onSuccess { error = null }
-            .onFailure { error = it.message ?: "网络异常" }
+            .onFailure { error = it.message ?: context.getString(R.string.doc_network_error) }
     }
 
     if (error != null) {
         TabPage {
             Column(Modifier.fillMaxSize()) {
-                DetailHeader(title = scope, onBack = onBack)
-                EmptyStateView(title = "搜索失败", description = error)
+                DetailHeader(title = scopeTitle, onBack = onBack)
+                EmptyStateView(title = stringResource(R.string.list_search_failed), description = error)
             }
         }
         return
     }
 
     val result = docs.searchResult
-    DetailListPage(title = scope, onBack = onBack) {
+    DetailListPage(title = scopeTitle, onBack = onBack) {
         when (scope) {
-            "通知" -> items(result.feed, key = { it.id }) { item ->
+            SearchScope.Feed -> items(result.feed, key = { it.id }) { item ->
                 CompactListRow(
                     title = item.title,
                     meta = "${item.sourceName} · ${item.summary}",
@@ -137,19 +147,19 @@ fun SearchSourceListScreen(
                 )
             }
 
-            "经验" -> items(result.experience, key = { it.slug }) { doc ->
+            SearchScope.Forum -> items(result.experience, key = { it.slug }) { doc ->
                 CompactListRow(
                     title = doc.title,
-                    meta = doc.anchor?.let { "命中本节：${it.text.trim()}" } ?: doc.description.orEmpty(),
+                    meta = doc.anchor?.let { stringResource(R.string.list_hit_section, it.text.trim()) } ?: doc.description.orEmpty(),
                     keyword = key,
                     onClick = { onOpenEntry(doc.slug) },
                 )
             }
 
-            "手册" -> items(result.handbook, key = { it.slug }) { doc ->
+            SearchScope.Handbook -> items(result.handbook, key = { it.slug }) { doc ->
                 CompactListRow(
                     title = doc.title,
-                    meta = doc.anchor?.let { "命中本节：${it.text.trim()}" } ?: doc.description.orEmpty(),
+                    meta = doc.anchor?.let { stringResource(R.string.list_hit_section, it.text.trim()) } ?: doc.description.orEmpty(),
                     keyword = key,
                     onClick = { onOpenEntry(doc.slug) },
                 )
@@ -158,7 +168,7 @@ fun SearchSourceListScreen(
             else -> item {
                 Column(Modifier.fillMaxWidth().padding(top = 48.dp)) {
                     Text(
-                        text = "未知搜索范围：$scope",
+                        text = stringResource(R.string.list_unknown_scope, scopeKey),
                         style = SeuType.Subheadline,
                         color = SeuTheme.colors.secondaryLabel,
                     )

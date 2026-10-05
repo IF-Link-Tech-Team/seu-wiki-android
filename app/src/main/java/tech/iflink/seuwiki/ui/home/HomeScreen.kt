@@ -28,8 +28,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
@@ -88,7 +90,7 @@ fun HomeScreen(
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            ScreenHeader(title = "主页", onProfileClick = onOpenProfile)
+            ScreenHeader(title = stringResource(R.string.nav_home), onProfileClick = onOpenProfile)
             LazyColumn(
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(
@@ -153,13 +155,17 @@ private fun ReminderCard(reminder: CampusReminder?, modifier: Modifier = Modifie
         modifier = modifier.cardStyle(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        CardLabel(text = "提醒", symbol = "bell.fill", tint = colors.orange)
+        CardLabel(text = stringResource(R.string.home_card_reminder), symbol = "bell.fill", tint = colors.orange)
         if (reminder != null) {
             val days = reminder.daysRemaining
             // `.contentTransition(.numericText())` — the value rolls instead of
             // snapping when the countdown crosses a day.
             AnimatedContent(
-                targetState = if (days > 0) "$days 天" else "今天",
+                targetState = if (days > 0) {
+                    stringResource(R.string.days_left, days)
+                } else {
+                    stringResource(R.string.today)
+                },
                 transitionSpec = {
                     (slideInVertically(tween(300)) { it } + fadeIn(tween(300)))
                         .togetherWith(slideOutVertically(tween(300)) { -it } + fadeOut(tween(200)))
@@ -180,9 +186,9 @@ private fun ReminderCard(reminder: CampusReminder?, modifier: Modifier = Modifie
                 overflow = TextOverflow.Ellipsis,
             )
         } else {
-            Text("暂无提醒", style = SeuType.Title3, color = colors.label)
+            Text(stringResource(R.string.home_empty_reminder), style = SeuType.Title3, color = colors.label)
             Text(
-                text = "在资讯详情页可设定提醒",
+                text = stringResource(R.string.home_empty_reminder_hint),
                 style = SeuType.Footnote,
                 color = colors.secondaryLabel,
             )
@@ -200,7 +206,7 @@ private fun NextCourseCard(course: Course?, modifier: Modifier = Modifier) {
         modifier = modifier.cardStyle(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        CardLabel(text = "下一节课", symbol = "calendar.day.timeline.left", tint = colors.blue)
+        CardLabel(text = stringResource(R.string.home_card_next_class), symbol = "calendar.day.timeline.left", tint = colors.blue)
         if (course != null) {
             Text(
                 text = course.timeRangeText,
@@ -220,9 +226,9 @@ private fun NextCourseCard(course: Course?, modifier: Modifier = Modifier) {
                 color = colors.secondaryLabel,
             )
         } else {
-            Text("今天没课了", style = SeuType.Title3, color = colors.label)
+            Text(stringResource(R.string.home_empty_class), style = SeuType.Title3, color = colors.label)
             Text(
-                text = "去工具页查看完整课表",
+                text = stringResource(R.string.home_empty_class_hint),
                 style = SeuType.Footnote,
                 color = colors.secondaryLabel,
             )
@@ -257,7 +263,7 @@ private fun FeedSection(
 ) {
     val shown = items.take(3)
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(title = "与我有关的通知", onAction = onOpenList)
+        SectionHeader(title = stringResource(R.string.home_section_related_feed), onAction = onOpenList)
         Column(Modifier.cardStyle(padding = 0.dp)) {
             shown.forEachIndexed { index, item ->
                 FeedRow(item = item, onClick = { onOpenItem(item.id) })
@@ -274,7 +280,7 @@ private fun ExperienceSection(
     onOpenEntry: (String) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(title = "经验长文", onAction = onOpenList)
+        SectionHeader(title = stringResource(R.string.home_section_experience), onAction = onOpenList)
         Column(Modifier.cardStyle(padding = 0.dp)) {
             entries.forEachIndexed { index, entry ->
                 DocRow(entry = entry, onClick = { onOpenEntry(entry.slug) })

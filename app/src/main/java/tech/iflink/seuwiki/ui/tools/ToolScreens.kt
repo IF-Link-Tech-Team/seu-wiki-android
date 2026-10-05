@@ -1,5 +1,6 @@
 package tech.iflink.seuwiki.ui.tools
 
+import androidx.compose.ui.res.stringArrayResource
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -36,6 +37,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.GpaPersistence
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -72,8 +75,6 @@ import java.util.UUID
 
 // --- 课表 -----------------------------------------------------------------
 
-/** 周一 … 周日 — index 0 is 1 = 周一, matching the iOS `Weekday.all` order. */
-private val WeekdayTitles = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 /**
  * 今天是周几.
@@ -94,11 +95,17 @@ private fun todayWeekdayIndex(): Int {
  * `selectedWeekday - Weekday.today` days, formatted by hand so the caption stays
  * Chinese on every device locale, as the original comment requires.
  */
+@Composable
 private fun selectedDateText(selected: Int, today: Int): String {
     val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_MONTH, selected - today) }
     val month = cal.get(Calendar.MONTH) + 1
     val day = cal.get(Calendar.DAY_OF_MONTH)
-    return "${month}月${day}日 · ${WeekdayTitles[selected - 1]}"
+    return stringResource(
+        R.string.timetable_date_line,
+        month,
+        day,
+        stringArrayResource(R.array.weekday_titles)[selected - 1],
+    )
 }
 
 /** `10:00` — the iOS `timeText(_:)`, hour unpadded and minute zero-padded. */
@@ -127,14 +134,14 @@ fun TimetableScreen(
     TabPage {
         Column(Modifier.fillMaxSize()) {
             DetailHeader(
-                title = "课表",
+                title = stringResource(R.string.timetable_title),
                 onBack = onBack,
                 trailing = {
                     // `.toolbar` shows the item only when the selection has moved
                     // away from today, so it carries no state of its own.
                     if (selected != today) {
                         Text(
-                            text = "回到今天",
+                            text = stringResource(R.string.timetable_back_to_today),
                             style = SeuType.Subheadline,
                             color = colors.accent,
                             modifier = Modifier
@@ -150,14 +157,14 @@ fun TimetableScreen(
                 items = (1..7).toList(),
                 selection = selected,
                 onSelect = { selected = it },
-                title = { WeekdayTitles[it - 1] },
+                title = { stringArrayResource(R.array.weekday_titles)[it - 1] },
             )
 
             if (dayCourses.isEmpty()) {
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
-                        title = if (selected == today) "今天没课" else "这天没课",
-                        description = "好好休息，或切换到其他日期查看",
+                        title = if (selected == today) stringResource(R.string.timetable_empty_today) else stringResource(R.string.timetable_empty_other),
+                        description = stringResource(R.string.timetable_empty_desc),
                         icon = {
                             Icon(
                                 imageVector = SeuIcons.of("calendar.day.timeline.left"),
@@ -201,7 +208,7 @@ private fun DaySummaryRow(selected: Int, today: Int, count: Int) {
         )
         Spacer(Modifier.weight(1f))
         Text(
-            text = "$count 节课",
+            text = stringResource(R.string.timetable_class_count, count),
             style = SeuType.Caption,
             color = colors.secondaryLabel,
         )
@@ -424,7 +431,7 @@ fun GPACalculatorScreen(onBack: () -> Unit) {
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = "绩点计算", onBack = onBack)
+            DetailHeader(title = stringResource(R.string.gpa_title), onBack = onBack)
 
             if (courses.isEmpty()) {
                 // The SwiftUI empty state puts the action inside the
@@ -435,8 +442,8 @@ fun GPACalculatorScreen(onBack: () -> Unit) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
                     EmptyStateView(
-                        title = "还没有课程",
-                        description = "添加课程的成绩与学分，自动按五分制换算绩点",
+                        title = stringResource(R.string.gpa_empty),
+                        description = stringResource(R.string.gpa_empty_desc),
                         icon = {
                             Icon(
                                 imageVector = SeuIcons.of("percent"),
@@ -456,7 +463,7 @@ fun GPACalculatorScreen(onBack: () -> Unit) {
                             .padding(horizontal = 32.dp)
                             .padding(top = 20.dp),
                     ) {
-                        Text("添加课程", style = SeuType.Headline)
+                        Text(stringResource(R.string.gpa_add_course), style = SeuType.Headline)
                     }
                 }
             } else {
@@ -475,7 +482,7 @@ fun GPACalculatorScreen(onBack: () -> Unit) {
 
                     item(key = "courses") {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            SectionHeader(title = "课程", actionLabel = null)
+                            SectionHeader(title = stringResource(R.string.gpa_section_courses), actionLabel = null)
                             CardColumn(padding = 14.dp, spacing = 12.dp) {
                                 courses.forEachIndexed { index, course ->
                                     if (index > 0) InsetDivider(leading = 0.dp)
@@ -516,7 +523,7 @@ private fun SummaryCard(summary: GpaSummary) {
                 color = colors.green,
             )
             Text(
-                text = "加权平均绩点",
+                text = stringResource(R.string.gpa_weighted),
                 style = SeuType.Caption,
                 color = colors.secondaryLabel,
             )
@@ -525,11 +532,11 @@ private fun SummaryCard(summary: GpaSummary) {
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            SummaryStat(summary.totalCreditsText, "总学分", Modifier.weight(1f))
+            SummaryStat(summary.totalCreditsText, stringResource(R.string.gpa_total_credits), Modifier.weight(1f))
             StatDivider()
-            SummaryStat(summary.averageScoreText, "加权平均分", Modifier.weight(1f))
+            SummaryStat(summary.averageScoreText, stringResource(R.string.gpa_weighted_score), Modifier.weight(1f))
             StatDivider()
-            SummaryStat("${summary.countedCourses} 门", "计入课程", Modifier.weight(1f))
+            SummaryStat(stringResource(R.string.gpa_counted_courses, summary.countedCourses), stringResource(R.string.gpa_counted_courses_label), Modifier.weight(1f))
         }
     }
 }
@@ -571,14 +578,14 @@ private fun GpaCourseRow(
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             GpaField(
-                placeholder = "课程名称（选填）",
+                placeholder = stringResource(R.string.gpa_name_placeholder),
                 value = course.name,
                 onValueChange = { onChange(course.copy(name = it)) },
                 modifier = Modifier.weight(1f),
             )
             Icon(
                 imageVector = SeuIcons.of("xmark"),
-                contentDescription = "删除课程",
+                contentDescription = stringResource(R.string.cd_delete_course),
                 tint = colors.tertiaryLabel,
                 modifier = Modifier
                     .size(28.dp)
@@ -590,15 +597,15 @@ private fun GpaCourseRow(
 
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             GpaField(
-                label = "学分",
-                placeholder = "如 3.0",
+                label = stringResource(R.string.gpa_credits_label),
+                placeholder = stringResource(R.string.gpa_credits_placeholder),
                 value = course.credits,
                 onValueChange = { onChange(course.copy(credits = it)) },
                 keyboardType = KeyboardType.Decimal,
                 modifier = Modifier.weight(1f),
             )
             GpaField(
-                label = "成绩",
+                label = stringResource(R.string.gpa_score_label),
                 placeholder = "0 – 100",
                 value = course.score,
                 onValueChange = { onChange(course.copy(score = it)) },
@@ -609,7 +616,7 @@ private fun GpaCourseRow(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                Text("绩点", style = SeuType.Caption2, color = colors.secondaryLabel)
+                Text(stringResource(R.string.gpa_column_label), style = SeuType.Caption2, color = colors.secondaryLabel)
                 Text(
                     text = gradePointText,
                     style = SeuType.Headline,
@@ -621,8 +628,8 @@ private fun GpaCourseRow(
         }
 
         val errorText = when {
-            course.hasScoreError -> "成绩需在 0–100 之间"
-            course.hasCreditsError -> "学分需大于 0"
+            course.hasScoreError -> stringResource(R.string.gpa_score_error)
+            course.hasCreditsError -> stringResource(R.string.gpa_credits_error)
             else -> null
         }
         if (errorText != null) {
@@ -689,7 +696,7 @@ private fun AddCourseAction(onClick: () -> Unit) {
             modifier = Modifier.size(19.dp),
         )
         Spacer(Modifier.width(6.dp))
-        Text("添加课程", style = SeuType.Body, color = colors.accent)
+        Text(stringResource(R.string.gpa_add_course), style = SeuType.Body, color = colors.accent)
     }
 }
 
@@ -707,11 +714,11 @@ private fun RulesCard() {
         "80–84" to "4.0",
         "60–64" to "2.0",
         "75–79" to "3.5",
-        "60 以下" to "0",
+        stringResource(R.string.gpa_band_below_60) to "0",
     )
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(title = "五分制换算", actionLabel = null)
+        SectionHeader(title = stringResource(R.string.gpa_convert_title), actionLabel = null)
         CardColumn(padding = 14.dp, spacing = 8.dp) {
             rules.chunked(2).forEach { row ->
                 Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -722,8 +729,7 @@ private fun RulesCard() {
             }
         }
         Text(
-            text = "换算规则依据 app 内手册「绩点计算规则」：90–100 为 5.0，此后每 5 分一档递减 0.5，" +
-                "60 以下为 0。未检索到东南大学官方公开的换算文件，此处为假设规则，实际以教务处最新规定为准。",
+            text = stringResource(R.string.gpa_convert_desc),
             style = SeuType.Footnote,
             color = colors.secondaryLabel,
         )
@@ -800,9 +806,9 @@ fun ToolPlaceholderScreen(
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = tool?.name.orEmpty(), onBack = onBack)
+            DetailHeader(title = tool?.let { stringResource(it.nameRes) }.orEmpty(), onBack = onBack)
             if (tool == null) {
-                EmptyStateView(title = "找不到该工具", description = "请返回工具页重新选择")
+                EmptyStateView(title = stringResource(R.string.tool_not_found), description = stringResource(R.string.tool_not_found_desc))
             } else {
                 Column(
                     modifier = Modifier.fillMaxSize().padding(horizontal = 32.dp),
@@ -812,14 +818,14 @@ fun ToolPlaceholderScreen(
                     ToolIconSquare(tool = tool, size = 72.dp)
                     VSpace(18.dp)
                     Text(
-                        text = tool.name,
+                        text = stringResource(tool.nameRes),
                         style = SeuType.Title2,
                         color = SeuTheme.colors.label,
                         textAlign = TextAlign.Center,
                     )
                     VSpace(6.dp)
                     Text(
-                        text = "${tool.subtitle} · 功能开发中，敬请期待",
+                        text = stringResource(R.string.tool_placeholder_desc, stringResource(tool.subtitleRes)),
                         style = SeuType.Footnote,
                         color = SeuTheme.colors.secondaryLabel,
                         textAlign = TextAlign.Center,
