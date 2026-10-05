@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          仅 DEBUG：把提醒的闹钟动作暴露给 adb，好在没有真机的情况下端到端验证
+          「到点通知真的弹得出来」。Release 的 ReminderReceiver 是 exported=false，
+          外部广播打不进去。
+
+          用法见 DebugFireReminderReceiver.kt 的 KDoc。
+        -->
+        <receiver
+            android:name="tech.iflink.seuwiki.DebugFireReminderReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="tech.iflink.seuwiki.action.FIRE_REMINDER" />
+            </intent-filter>
+        </receiver>
+    </application>
+
+</manifest>
