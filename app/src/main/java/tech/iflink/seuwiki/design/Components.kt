@@ -1,6 +1,6 @@
 package tech.iflink.seuwiki.design
 
-import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -39,29 +39,28 @@ import androidx.compose.ui.unit.dp
  * Mirrors `.padding(padding).frame(maxWidth: .infinity, alignment: .leading)`
  * over `Color(.secondarySystemGroupedBackground)` clipped to a 20pt continuous
  * corner.
+ *
+ * Modifier order matters here. In SwiftUI the `.padding` is applied *first*, so
+ * the background and clip that follow cover the padding as well — the card spans
+ * the full available width and the 16pt inset is inside it. Writing
+ * `.padding(16).background(...)` in Compose would instead reserve 16pt of page
+ * background on every side and shrink the card by 32pt, so the chain below is
+ * deliberately full-width → clip → background → padding.
  */
 @Composable
 fun Modifier.cardStyle(
     padding: Dp = 16.dp,
     background: Color? = null,
     onClick: (() -> Unit)? = null,
-    contentAlignment: Alignment = Alignment.TopStart,
 ): Modifier {
     val colors = SeuTheme.colors
     val shape = ContinuousRoundedShape(CardCornerRadius)
     return this
-        .then(
-            if (onClick != null) {
-                Modifier.clickable(onClick = onClick)
-            } else {
-                Modifier
-            },
-        )
-        .padding(padding)
         .fillMaxWidth()
         .clip(shape)
         .background(background ?: colors.secondaryGroupedBackground)
-        .then(if (contentAlignment != Alignment.TopStart) Modifier else Modifier)
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+        .padding(padding)
 }
 
 /** Card that lays its children out on one axis with the given spacing. */
@@ -96,7 +95,7 @@ val PagePadding: PaddingValues = PaddingValues(16.dp)
  *
  * Port of the SwiftUI `ConsoleBar`: a horizontally scrolling row of capsules,
  * the selected one filled with the accent color and shown in semibold. The
- * selected capsule animates its width, standing in for SwiftUI's
+ * capsule grows from zero width on selection, standing in for SwiftUI's
  * `matchedGeometryEffect` morph.
  */
 @Composable
@@ -108,36 +107,37 @@ fun <T> ConsoleBar(
     modifier: Modifier = Modifier,
 ) {
     val colors = SeuTheme.colors
-    val scrollState = rememberScrollState()
 
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(colors.groupedBackground)
-            .horizontalScroll(scrollState)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items.forEach { item ->
-            val selected = item == selection
-            val width by animateDpAsState(
-                targetValue = if (selected) 4.dp else 0.dp,
-                animationSpec = tween(250),
-                label = "consoleIndicator",
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(50))
-                    .background(if (selected) colors.accent else colors.secondaryGroupedBackground)
-                    .clickable { onSelect(item) }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(width),
-            ) {
+    // The background lives on the viewport, not the scrollable content, so the
+    // bar still paints full-bleed when the capsules do not fill the width.
+    Box(modifier.fillMaxWidth().background(colors.groupedBackground)) {
+        Row(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            items.forEach { item ->
+                val selected = item == selection
+                val background by animateColorAsState(
+                    targetValue = if (selected) colors.accent else colors.secondaryGroupedBackground,
+                    animationSpec = tween(250),
+                    label = "capsuleFill",
+                )
+                val content by animateColorAsState(
+                    targetValue = if (selected) Color.White else colors.label,
+                    animationSpec = tween(250),
+                    label = "capsuleLabel",
+                )
                 Text(
                     text = title(item),
                     style = if (selected) SeuType.SubheadlineSemibold else SeuType.Subheadline,
-                    color = if (selected) Color.White else colors.label,
+                    color = content,
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(background)
+                        .clickable { onSelect(item) }
+                        .padding(horizontal = 14.dp, vertical = 8.dp),
                 )
             }
         }
@@ -202,10 +202,10 @@ fun InsetDivider(leading: Dp = 52.dp, modifier: Modifier = Modifier) {
 /** A 32dp circular tinted icon well — the row leading glyph across the app. */
 @Composable
 fun IconWell(
-    icon: @Composable () -> Unit,
     tint: Color,
     size: Dp = 32.dp,
     modifier: Modifier = Modifier,
+    icon: @Composable () -> Unit,
 ) {
     Box(
         modifier = modifier

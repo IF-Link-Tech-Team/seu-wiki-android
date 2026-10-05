@@ -100,6 +100,23 @@ val LightSeuColors = SeuColorScheme(
     isDark = false,
 )
 
+/**
+ * Linear blend of two colors — the counterpart of SwiftUI's `Color.mix(with:by:)`.
+ *
+ * The Tools grid leans on this to give every saturated card a subtle top-to-bottom
+ * gradient (`tint` mixed 8% toward white at the top, 10% toward black at the
+ * bottom) rather than a flat fill.
+ */
+fun Color.mixWith(other: Color, by: Float): Color {
+    val t = by.coerceIn(0f, 1f)
+    return Color(
+        red = red * (1 - t) + other.red * t,
+        green = green * (1 - t) + other.green * t,
+        blue = blue * (1 - t) + other.blue * t,
+        alpha = alpha * (1 - t) + other.alpha * t,
+    )
+}
+
 val DarkSeuColors = SeuColorScheme(
     accent = SeuColors.AccentDark,
     groupedBackground = Color(0xFF000000),

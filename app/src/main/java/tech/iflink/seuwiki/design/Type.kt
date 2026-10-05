@@ -48,6 +48,9 @@ object SeuType {
     val Title2 = sf(22, FontWeight.Bold, 28, -0.3f)
     val Title3 = sf(20, FontWeight.Bold, 25, -0.2f)
     val Headline = sf(17, FontWeight.SemiBold, 22, -0.4f)
+
+    /** `.headline.weight(.bold)` — the tool and topic card titles. */
+    val HeadlineBold = sf(17, FontWeight.Bold, 22, -0.4f)
     val Subheadline = sf(15, FontWeight.Normal, 20, -0.2f)
     val SubheadlineMedium = sf(15, FontWeight.Medium, 20, -0.2f)
     val SubheadlineSemibold = sf(15, FontWeight.SemiBold, 20, -0.2f)
@@ -56,6 +59,10 @@ object SeuType {
     val Footnote = sf(13, FontWeight.Normal, 18, -0.1f)
     val Caption = sf(12, FontWeight.Normal, 16, 0f)
     val CaptionMedium = sf(12, FontWeight.Medium, 16, 0f)
+
+    /** `.caption2` — the smallest step, used by the topic cards' post counts. */
+    val Caption2 = sf(11, FontWeight.Normal, 14, 0f)
+    val Caption2Medium = sf(11, FontWeight.Medium, 14, 0f)
 }
 
 val SeuTypography = Typography(
