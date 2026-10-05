@@ -5,6 +5,10 @@ import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
@@ -21,15 +25,34 @@ import tech.iflink.seuwiki.models.Course
  * Persistence uses `SharedPreferences`, the direct counterpart of the iOS
  * `UserDefaults` store the SwiftUI `UserProfile` writes to, so the two clients
  * persist the same set of keys and can be reasoned about the same way.
+ *
+ * 现在是 [ViewModel]（A-3）。之前 `remember { UserProfileStore(context) }` 每次
+ * 重组/配置变更都可能重建一个实例，构造时会重读一遍磁盘并**整体覆盖**字段 ——
+ * 旋转屏幕的瞬间，用户刚在 Profile 页改了一半的输入会被默认值冲掉。
+ * ViewModel 让实例跨配置变更存活，磁盘只在显式 mutation 时写。
+ *
+ * 只持有 [SharedPreferences]（进程级单例，本身不泄漏 Activity），不持有 Context。
  */
-class UserProfileStore(context: Context) {
-
-    private val prefs: SharedPreferences =
-        context.getSharedPreferences("seu_wiki_profile", Context.MODE_PRIVATE)
+class UserProfileStore(
+    private val prefs: SharedPreferences,
+) : ViewModel() {
 
     private val json = Json { ignoreUnknownKeys = true }
 
     companion object {
+        /**
+         * 工厂需要 Context 才能拿到 prefs，但 ViewModel 本身不该持有 Context。
+         * 这里在**构造那一刻**取 `applicationContext` 生成 prefs，之后就只拿着
+         * prefs 走，ViewModelStore 清理时不会连带泄漏 Activity。
+         */
+        fun factory(context: Context): ViewModelProvider.Factory {
+            val app = context.applicationContext
+            return viewModelFactory {
+                initializer {
+                    UserProfileStore(app.getSharedPreferences("seu_wiki_profile", Context.MODE_PRIVATE))
+                }
+            }
+        }
         const val DEFAULT_COLLEGE = "信息科学与工程学院"
         const val DEFAULT_DEGREE = "本科"
         const val DEFAULT_GRADE = "大三"

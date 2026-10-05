@@ -44,6 +44,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -51,7 +52,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import tech.iflink.seuwiki.data.AuthStore
-import tech.iflink.seuwiki.data.FeedApiClient
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.ContinuousRoundedShape
@@ -178,7 +178,10 @@ object Routes {
 @Composable
 fun RootView() {
     val context = LocalContext.current
-    val profile = remember { UserProfileStore(context.applicationContext) }
+    // A-3：三个 store 都改成了 ViewModel，用 viewModel() 取而不是 remember{}。
+    // remember 会在配置变更后重建实例（分页状态与手册缓存随之丢失，
+    // UserProfileStore 还会在构造时用磁盘值覆盖用户正在编辑的输入）。
+    val profile: UserProfileStore = viewModel(factory = UserProfileStore.factory(context))
     // 单例：OIDC 回调由 AuthCallbackActivity 处理，必须和这里看到同一个 session。
     val auth = remember { AuthStore.get(context.applicationContext) }
     // 资讯侧接 seu.wiki 线上接口。手册 / 经验长文 / 统一搜索走 DocsStore。
@@ -186,8 +189,8 @@ fun RootView() {
     // 注意**不带 token**：`api/site` 这一组全是公开只读 GET，后端根本不校验鉴权
     // （实测带一个乱写的 Bearer 一样 200）。挂了 token 只会把「能不能读到内容」
     // 和「登录态是否健康」耦合起来，还可能让一次刷列表被续期失败牵连。
-    val feedStore = remember { FeedStore(client = FeedApiClient()) }
-    val docsStore = remember { DocsStore() }
+    val feedStore: FeedStore = viewModel(factory = FeedStore.Factory)
+    val docsStore: DocsStore = viewModel(factory = DocsStore.Factory)
     val navController = rememberNavController()
 
     val backStack by navController.currentBackStack.collectAsStateWithLifecycle()

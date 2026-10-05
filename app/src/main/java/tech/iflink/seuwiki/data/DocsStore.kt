@@ -3,6 +3,10 @@ package tech.iflink.seuwiki.data
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,11 +26,21 @@ import tech.iflink.seuwiki.models.FeedItem
  * 手册树则随详情页重建），store 本身只提供 suspend 方法与可观察状态。
  * 这一点和 [FeedStore] 相反是有意的：分页在 FeedStore 里、生命周期归 ViewModel，
  * 而这里的数据都是「一次请求一个结果」，不需要长期存活的 scope。
+ *
+ * 即便如此它也改成了 [ViewModel]（A-3）：手册树的 `detailCache` 是跨页面复用的
+ * 缓存，挂在 `remember` 里的普通对象上时旋转一次就没了，用户会看到详情页闪一下
+ * 空内容再重新加载。
  */
 class DocsStore(
     private val docs: DocsApiClient = DocsApiClient(),
     private val feed: FeedApiClient = FeedApiClient(),
-) {
+) : ViewModel() {
+
+    companion object {
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer { DocsStore() }
+        }
+    }
 
     private val version = mutableStateOf(0)
 

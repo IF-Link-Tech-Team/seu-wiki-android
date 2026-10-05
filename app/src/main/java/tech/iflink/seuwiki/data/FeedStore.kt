@@ -1,8 +1,12 @@
 package tech.iflink.seuwiki.data
 
 import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -11,6 +15,13 @@ import tech.iflink.seuwiki.ui.feed.FeedScope
 
 /**
  * 资讯状态仓库，对应 iOS 端 `FeedStore`。
+ *
+ * 现在是 [ViewModel]（A-3）。之前是 `remember { FeedStore() }` 持有的普通单例，
+ * 生命周期完全不受控：自己 new 了一个 `CoroutineScope(Dispatchers.Main.immediate)`
+ * 却从不取消它，于是旋转屏幕后旧实例里仍在途的分页请求会把结果写进**已经没人
+ * 观察的状态**里，白白消耗流量；而且分页状态因此在配置变更后从头重来。
+ * 换成 ViewModel 之后请求挂在 [viewModelScope] 上，`onCleared` 时统一取消，
+ * 实例本身由 `viewModel()` 在配置变更时保留。
  *
  * 每个 console scope（为你精选 / 全部 / 各分类）各自维护一页 cursor 分页状态。
  *
@@ -26,8 +37,14 @@ import tech.iflink.seuwiki.ui.feed.FeedScope
  */
 class FeedStore(
     private val client: FeedApiClient = FeedApiClient(),
-    private val coroutineScope: CoroutineScope = CoroutineScope(Dispatchers.Main.immediate),
-) {
+) : ViewModel() {
+
+    companion object {
+        /** 无依赖，工厂只是为了让 `viewModel()` 有地方拿默认构造。 */
+        val Factory: ViewModelProvider.Factory = viewModelFactory {
+            initializer { FeedStore() }
+        }
+    }
 
     /** One scope's pagination + load state. */
     data class PageState(
@@ -113,7 +130,7 @@ class FeedStore(
         generations[key] = (generations[key] ?: 0L) + 1L
         states[key] = page(scope).copy(isLoading = true)
         bump()
-        coroutineScope.launch {
+        viewModelScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { fetch(scope, profile, null) }
                 states[key] = PageState(
@@ -151,7 +168,7 @@ class FeedStore(
         val generationAtStart = generations[key] ?: 0L
         states[key] = state.copy(isLoadingMore = true)
         bump()
-        coroutineScope.launch {
+        viewModelScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { fetch(scope, profile, cursor) }
                 // 用户在请求在途时刷新过：这一页属于旧列表，丢掉。
