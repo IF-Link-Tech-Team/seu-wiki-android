@@ -1,13 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  seu.wiki serves plain HTTP during development; production is HTTPS only.
-  Cleartext is allowed only for the documented local/dev hosts, never globally.
+  release 侧的网络策略：**一律禁止明文**。
+
+  模拟器联调需要的 10.0.2.2 明文例外放在 src/debug/res/xml 下，
+  不再随发布包一起出去。
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="false" />
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">10.0.2.2</domain>
-        <domain includeSubdomains="true">localhost</domain>
-        <domain includeSubdomains="true">127.0.0.1</domain>
-    </domain-config>
 </network-security-config>

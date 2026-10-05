@@ -33,8 +33,11 @@ android {
         applicationId = "tech.iflink.seuwiki"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // versionCode / versionName 从 gradle property 读，不再写死 1
+        // （写死的话每次发版都要手动改，漏改就会被应用商店拒收）。
+        // 缺省仍给 1，让本地能构建；CI 用 -PversionCode=… 覆盖。
+        versionCode = (project.findProperty("versionCode") as String?)?.toInt() ?: 1
+        versionName = (project.findProperty("versionName") as String?) ?: "0.1.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -65,6 +68,17 @@ android {
             }
         }
     }
+
+    /**
+     * 缺签名材料时**直接失败**，不再静默产出未签名包。
+     *
+     * 之前 `if (hasReleaseSigning)` 一路包着，配置缺失时 release 任务照跑，
+     * 产出一个**没有签名**的 APK —— 构建是绿的，装到设备上直接
+     * INSTALL_PARSE_FAILED_NO_CERTIFICATES，很容易一路带到发布才炸。
+     *
+     * 逃生口是显式的：`-PallowUnsignedRelease=true`。只为「本地验证 release 变体
+     * 能编过、R8 规则没问题」而存在，必须是有人主动加的，不会被 CI 顺手继承。
+     */
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -107,4 +121,27 @@ dependencies {
     implementation(libs.coil.compose)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
+}
+/**
+ * 缺 release 签名材料时**直接失败**，不再静默产出未签名包。
+ *
+ * 之前 `if (hasReleaseSigning)` 一路包着，配置缺失时 release 任务照跑，产出一个
+ * **没有签名**的 APK —— 构建是绿的，装到设备上直接
+ * INSTALL_PARSE_FAILED_NO_CERTIFICATES，很容易一路带到发布才炸。
+ *
+ * 判据取自 `startParameter.taskNames`（命令行请求的任务）而不是
+ * `gradle.taskGraph.whenReady`：工程开了 configuration cache，
+ * whenReady 在缓存命中时根本不会触发，守卫会静默失效。
+ * 逃生口是显式的 `-PallowUnsignedRelease=true`：只为「本地验证 release 变体能编过、
+ * R8 规则没问题」而存在，必须有人主动加，不会被 CI 顺手继承。
+ */
+val allowUnsignedRelease = (findProperty("allowUnsignedRelease") as String?) == "true"
+val wantsRelease = gradle.startParameter.taskNames.any { it.contains("elease") }
+if (!hasReleaseSigning && !allowUnsignedRelease && wantsRelease) {
+    throw GradleException(
+        "缺少 release 签名材料。请设置环境变量 SEU_WIKI_KEYSTORE 指向包含 " +
+            "storeFile / storePassword / keyAlias / keyPassword 的 properties 文件。" +
+            "若只是要本地验证 release 变体能否编过，请显式加 " +
+            "-PallowUnsignedRelease=true（产出的包没有签名，不能发布）。",
+    )
 }
