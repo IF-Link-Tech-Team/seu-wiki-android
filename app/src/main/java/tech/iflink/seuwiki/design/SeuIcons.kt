@@ -9,6 +9,7 @@ import androidx.compose.material.icons.automirrored.outlined.DirectionsWalk
 import androidx.compose.material.icons.automirrored.outlined.LibraryBooks
 import androidx.compose.material.icons.automirrored.outlined.MenuBook
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
@@ -26,6 +27,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddCircle
 import androidx.compose.material.icons.outlined.Apartment
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.BookmarkBorder
 import androidx.compose.material.icons.outlined.CalendarToday
 import androidx.compose.material.icons.outlined.CardGiftcard
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
@@ -43,6 +45,7 @@ import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Percent
+import androidx.compose.material.icons.outlined.PeopleAlt
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Restaurant
@@ -53,6 +56,7 @@ import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Tram
 import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.Warning
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material.icons.outlined.Work
 import androidx.compose.material.icons.outlined.Workspaces
@@ -151,11 +155,30 @@ object SeuIcons {
         "trash" to Icons.Outlined.Delete,
         "calendar.badge.checkmark" to Icons.Outlined.EventAvailable,
         "book.closed.fill" to Icons.AutoMirrored.Outlined.MenuBook,
+        "bookmark" to Icons.Outlined.BookmarkBorder,
+        "bookmark.fill" to Icons.Filled.Bookmark,
+        "exclamationmark.triangle" to Icons.Outlined.Warning,
+        "person.2" to Icons.Outlined.PeopleAlt,
     )
 
     /** Resolves an SF Symbol name, falling back to a neutral glyph. */
     fun of(symbol: String?): ImageVector =
         (symbol?.let { bySymbol[it] }) ?: Icons.Outlined.Apps
+
+    /**
+     * 这个 SF 名有没有对应到图标。
+     *
+     * 兜底是 [Icons.Outlined.Apps]（九宫格）—— 一个**看起来正常、其实完全不对**的
+     * 图形：写错一个 SF 名，代码照样编译、界面照样渲染，只有肉眼能发现。收藏按钮
+     * 就是这么坏掉的（`bookmark` 没登记，渲染成九宫格）。
+     *
+     * 自检会扫全量源码里 `SeuIcons.of(...)` 的字面量来断言覆盖率，所以新增图标
+     * 忘了登记会直接挂测试，而不是留到发版后被人看出来。
+     */
+    fun isMapped(symbol: String?): Boolean = symbol != null && bySymbol.containsKey(symbol)
+
+    /** 已登记的 SF 名，供自检比对。 */
+    val mappedSymbols: Set<String> get() = bySymbol.keys
 
     /** Tab-bar and category glyphs resolve at a fixed weight. */
     val Home: ImageVector get() = of("house")

@@ -20,9 +20,11 @@ import tech.iflink.seuwiki.data.resolveBookmarks
 import tech.iflink.seuwiki.models.DocEntry
 import tech.iflink.seuwiki.models.DocKind
 import tech.iflink.seuwiki.models.UserFacingError
+import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.Routes
 import tech.iflink.seuwiki.ui.search.SearchScope
+import java.io.File
 
 /**
  * 关键纯逻辑断言套件 —— 与 iOS 端 `SelfCheck.swift` **逐条对齐**。
@@ -221,6 +223,87 @@ class SelfCheckTest {
         val now = 1_767_254_399_000L
         assertTrue("过去的时间不该排", now - 3_600_000 < now)
         assertTrue("未来的时间该排", now + 3_600_000 > now)
+    }
+
+    // MARK: - SF Symbol 覆盖率
+
+    private val stringLiteral = Regex(""""([^"]+)"""")
+
+    /**
+     * 抠出源码里所有传给 `SeuIcons.of(...)` 的字符串字面量。
+     *
+     * 括号必须**配平**才能取到实参 —— 调用点里全是
+     * `of(if (x) "a" else "b")` 这种多行条件表达式，简单的非贪婪正则会在
+     * `if (` 那个右括号处就截断，两个分支一个都捞不到。
+     */
+    private fun iconLiteralsIn(source: String): List<String> {
+        val marker = "SeuIcons.of("
+        val out = mutableListOf<String>()
+        var i = 0
+        while (true) {
+            val at = source.indexOf(marker, i)
+            if (at < 0) break
+            val open = at + marker.length - 1
+            var depth = 0
+            var j = open
+            while (j < source.length) {
+                when (source[j]) {
+                    '(' -> depth++
+                    ')' -> depth--
+                }
+                j++
+                if (depth == 0) break
+            }
+            stringLiteral.findAll(source.substring(open + 1, j - 1))
+                .forEach { out += it.groupValues[1] }
+            i = j
+        }
+        return out
+    }
+
+    @Test
+    fun `SF Symbol 源码里用到的名字必须全部登记`() {
+        // 兜底是 `Icons.Outlined.Apps`（九宫格）—— 一个**看着正常、其实完全不对**的
+        // 图形：SF 名写错，代码照样编译、界面照样渲染，只有肉眼能发现。本轮就是靠
+        // 模拟器截图发现详情页右上角的收藏按钮渲染成了九宫格。
+        //
+        // 扫全量源码把所有实参字面量抠出来跟映射表比对，以后新增图标忘了登记会直接
+        // 挂测试，而不是留到发版后被人看出来。
+        val sourceRoot = File("src/main/java").takeIf { it.isDirectory }
+            ?: error("找不到 src/main/java，工作目录是 ${File("").absolutePath}")
+        val ktFiles = sourceRoot.walkTopDown().filter { it.extension == "kt" }.toList()
+        assertTrue("应当扫到源码文件", ktFiles.isNotEmpty())
+
+        val sources = ktFiles.associate { it to it.readText(Charsets.UTF_8) }
+
+        val passedDirectly = sources.values.flatMap { iconLiteralsIn(it) }
+        // `iconKey = "…"` 是数据侧声明的图标名（话题目录、工具卡片），同样要覆盖。
+        val declared = sources.values.flatMap { s ->
+            Regex("""iconKey\s*=\s*"([^"]+)"""").findAll(s).map { it.groupValues[1] }.toList()
+        }
+        val used = (passedDirectly + declared).toSet()
+
+        assertTrue("应当扫到 SF 名", used.isNotEmpty())
+        val unmapped = used.filterNot { SeuIcons.isMapped(it) }.sorted()
+        assertTrue("这些 SF 名没登记，会静默渲染成九宫格兜底：$unmapped", unmapped.isEmpty())
+    }
+
+    @Test
+    fun `SF Symbol 搜索范围每一项都已登记`() {
+        // SearchScope 的 symbol 是位置参数（`All("all", R.string..., "magnifyingglass")`），
+        // 源码扫描抓不到，这里直接遍历枚举断言。
+        SearchScope.entries.forEach {
+            assertTrue("SearchScope.${it.name} 的图标没登记：${it.symbol}", SeuIcons.isMapped(it.symbol))
+        }
+    }
+
+    @Test
+    fun `SF Symbol 收藏与空态这一组已登记`() {
+        // 这几个名字曾经缺席（bookmark / bookmark.fill / exclamationmark.triangle /
+        // person.2），是本轮模拟器实测 + 上面那条全量扫描才抓出来的。
+        listOf("bookmark", "bookmark.fill", "exclamationmark.triangle", "person.2").forEach {
+            assertTrue("SF 名 \"$it\" 没登记", SeuIcons.isMapped(it))
+        }
     }
 
     // MARK: - 收藏
