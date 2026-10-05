@@ -626,12 +626,7 @@ private fun SearchDocResultRow(
         "book.closed.fill"
     }
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .cardStyle(padding = 14.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick)
-            .padding(0.dp),
+        modifier = Modifier.cardStyle(padding = 14.dp, onClick = onClick),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top,
     ) {

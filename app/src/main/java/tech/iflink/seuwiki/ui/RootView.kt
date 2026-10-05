@@ -1,5 +1,6 @@
 package tech.iflink.seuwiki.ui
 
+import android.net.Uri
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -95,17 +96,18 @@ enum class AppTab(
  * 所有**动态路径段**（id / slug / 关键词）都必须经 [seg] 编码后拼进来，
  * 不能直接插值。原来的写法有两个真实故障：
  *
- * 1. id 直接插值，而资讯 id 与手册 slug 里可能出现 `?`、`#`、`/`。
- *    `?` 之后的内容会被当成 query、`#` 之后根本到不了 Navigation，
- *    结果就是路由匹配失败甚至抛异常。
+ * 1. id 直接插值，而 id 里可能出现 `?`、`#`、`/`。`?` 之后的内容会被当成 query、
+ *    `#` 之后根本到不了 Navigation，结果是路由匹配失败甚至抛异常。
  * 2. 关键词用 `URLEncoder.encode` —— 它是 **form 编码**，空格会编成 `+`。
  *    而 path 段里 `+` 是字面的加号，Navigation 也不会把它还原成空格，
  *    于是搜「machine learning」点查看更多会变成搜「machine+learning」，永远搜不到。
  *
- * 正确做法是对**单个路径段**做 percent-encoding，空格是 `%20`。
- * 这里用 [android.net.Uri.encode] 的「保留 `/`」重载再把 `/` 换回
- * `%2F`：slug 形如 `survival/观点篇/1-认识`，斜杠必须留在路径里当分隔符
- * 还是当数据，由调用点决定 —— [seg] 一律编码，跨段的交给调用方自己拼。
+ * **斜杠必须编码成 `%2F`**，这是这里最关键的一点：手册 slug 形如
+ * `survival/观点篇/1-认识`，本身含斜杠。若把 `/` 原样留在路由里，
+ * 它会被当成**路径分隔符**，一个 `{slug}` 参数匹配不到多段路径，
+ * `navController.navigate` 直接抛 `IllegalArgumentException` 把 App 带走 ——
+ * 这正是实测点搜索结果就崩的原因。编码后整条 slug 只占一个 path 段，
+ * 读取时用 [Routes.decode] 还原。
  */
 object Routes {
     const val PROFILE = "profile"
@@ -124,14 +126,28 @@ object Routes {
     /**
      * 编码**单个**路径段。
      *
-     * 允许字符集与 RFC 3986 的 `pchar` 一致（字母数字 + `-._~` + 子分隔符），
-     * 空格编成 `%20` 而不是 `+`。
+     * 只保留 RFC 3986 的 unreserved 字符（`A-Za-z0-9-._~`）与 `:`
+     * （允许出现在 path 段中）。**斜杠、`+`、空格全部编码**：
+     * - `+` → `%2B`：form 编码会把空格变成 `+`，但在 path 段里 `+` 是字面加号；
+     * - 空格 → `%20`；
+     * - `/` → `%2F`：否则会被当成路径分隔符，路由匹配不上。
      */
-    fun seg(value: String): String =
-        java.net.URLEncoder.encode(value, "UTF-8")
-            .replace("+", "%20")
-            .replace("%2F", "/")
-            .replace("%3A", ":")
+    fun seg(value: String): String = buildString(value.length + 8) {
+        for (b in value.toByteArray(Charsets.UTF_8)) {
+            val c = b.toInt().toChar()
+            if (c in 'A'..'Z' || c in 'a'..'z' || c in '0'..'9' ||
+                c == '-' || c == '_' || c == '.' || c == '~' || c == ':'
+            ) {
+                append(c)
+            } else {
+                append('%').append("%02X".format(b.toInt() and 0xFF))
+            }
+        }
+    }
+
+    /** [seg] 的逆运算。Navigation 是否已解码并不保证，这里统一再解一次。 */
+    fun decode(value: String?): String =
+        runCatching { Uri.decode(value.orEmpty()) }.getOrElse { value.orEmpty() }
 
     fun feedDetail(id: String) = "feed/detail/${seg(id)}"
     fun forumDetail(id: String) = "forum/detail/${seg(id)}"
@@ -273,7 +289,7 @@ fun RootView() {
                 FeedItemDetailScreen(
                     profile = profile,
                     store = feedStore,
-                    itemId = entry.arguments?.getString("id").orEmpty(),
+                    itemId = Routes.decode(entry.arguments?.getString("id")),
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -299,7 +315,7 @@ fun RootView() {
             ) { entry ->
                 HandbookPartScreen(
                     docs = docsStore,
-                    partKey = entry.arguments?.getString("id").orEmpty(),
+                    partKey = Routes.decode(entry.arguments?.getString("id")),
                     onBack = { navController.popBackStack() },
                     onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                 )
@@ -311,7 +327,7 @@ fun RootView() {
                 // slug 形如 survival/观点篇/1-认识，Navigation 解码后原样传出。
                 DocEntryDetailScreen(
                     docs = docsStore,
-                    slug = entry.arguments?.getString("slug").orEmpty(),
+                    slug = Routes.decode(entry.arguments?.getString("slug")),
                     anchor = entry.arguments?.getString("anchor"),
                     onBack = { navController.popBackStack() },
                 )
@@ -324,8 +340,8 @@ fun RootView() {
                 ),
             ) { entry ->
                 SearchSourceListScreen(
-                    scope = entry.arguments?.getString("scope").orEmpty(),
-                    keyword = entry.arguments?.getString("keyword").orEmpty(),
+                    scope = Routes.decode(entry.arguments?.getString("scope")),
+                    keyword = Routes.decode(entry.arguments?.getString("keyword")),
                     onBack = { navController.popBackStack() },
                     docs = docsStore,
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
@@ -343,7 +359,7 @@ fun RootView() {
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
             ) { entry ->
                 ToolPlaceholderScreen(
-                    toolId = entry.arguments?.getString("id").orEmpty(),
+                    toolId = Routes.decode(entry.arguments?.getString("id")),
                     onBack = { navController.popBackStack() },
                 )
             }

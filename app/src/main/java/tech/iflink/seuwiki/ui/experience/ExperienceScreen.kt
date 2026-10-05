@@ -392,13 +392,11 @@ private fun Modifier.selectableChip(selected: Boolean, onClick: () -> Unit): Mod
 /** 经验长文条目卡：标题 + 描述 + 篇/分类。 */
 @Composable
 fun DocEntryCard(entry: DocEntry, onClick: () -> Unit) {
+    // cardStyle 内部已经做了 clip + background，并且自带 onClick。
+    // 不要再额外挂 .clip(CircleShape)：那会把 20pt 圆角卡片按「短边半径」
+    // 裁成透镜形，左右两侧的内容直接被切掉（标题会缺头几个字）。
     Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .cardStyle(padding = 14.dp)
-            .clip(CircleShape)
-            .clickable(onClick = onClick)
-            .padding(0.dp),
+        modifier = Modifier.cardStyle(padding = 14.dp, onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(entry.title, style = SeuType.Headline, color = SeuTheme.colors.label)
