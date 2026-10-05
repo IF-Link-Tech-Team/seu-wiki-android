@@ -1,12 +1,12 @@
 package tech.iflink.seuwiki.ui.home
 
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -23,13 +23,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
+import tech.iflink.seuwiki.data.toFeedProfile
 import tech.iflink.seuwiki.design.InsetDivider
 import tech.iflink.seuwiki.design.SectionHeader
 import tech.iflink.seuwiki.design.SeuIcons
@@ -44,6 +47,7 @@ import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
+import tech.iflink.seuwiki.ui.feed.FeedScope
 import tech.iflink.seuwiki.ui.rows.FeedRow
 import tech.iflink.seuwiki.ui.rows.ForumRow
 
@@ -61,15 +65,22 @@ import tech.iflink.seuwiki.ui.rows.ForumRow
 @Composable
 fun HomeScreen(
     profile: UserProfileStore,
+    feedStore: FeedStore,
     onOpenProfile: () -> Unit,
     onOpenFeedList: () -> Unit,
     onOpenForumList: () -> Unit,
     onOpenFeed: (String) -> Unit,
     onOpenPost: (String) -> Unit,
 ) {
-    // The live store supplies these once `/api/site/for-you` is wired in; until
-    // then this is the same fallback the SwiftUI view uses.
-    val feedItems = remember { MockData.feedItems.filter { it.isSelected } }
+    // 通知区用「为你精选」的第一页，与 SwiftUI 的 HomeView.feedItems 同源；
+    // 该 scope 未加载过时会自动触发一次请求。
+    val feedProfile = remember(profile.college, profile.degree, profile.grade, profile.interests) {
+        profile.toFeedProfile()
+    }
+    LaunchedEffect(Unit) { feedStore.loadIfNeeded(FeedScope.ForYou, feedProfile) }
+    val feedItems = feedStore.page(FeedScope.ForYou).items
+
+    // 论坛侧按 iOS 现状仍是本地数据。
     val forumPosts = remember { MockData.forumPosts.take(3) }
 
     TabPage {

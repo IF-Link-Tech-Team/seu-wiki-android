@@ -16,9 +16,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -26,6 +26,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,13 +47,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.design.CardColumn
 import tech.iflink.seuwiki.design.ConsoleBar
 import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.IconWell
 import tech.iflink.seuwiki.design.InsetDivider
-import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuColorScheme
+import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.design.cardStyle
@@ -62,6 +64,7 @@ import tech.iflink.seuwiki.models.HandbookEntry
 import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.ListBottomPadding
+import tech.iflink.seuwiki.ui.LoadingView
 import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
 
@@ -111,6 +114,7 @@ class SearchResults(
  */
 @Composable
 fun SearchScreen(
+    feedStore: FeedStore,
     onOpenProfile: () -> Unit,
     onOpenFeed: (String) -> Unit,
     onOpenPost: (String) -> Unit,
@@ -122,7 +126,31 @@ fun SearchScreen(
     val scope = SearchScope.entries.firstOrNull { it.name == scopeKey } ?: SearchScope.All
     val keyboard = LocalSoftwareKeyboardController.current
 
-    val results = remember(keyword) { search(keyword) }
+    // 「通知」信源走线上 pool 搜索（与 iOS 的 SearchStore 一致）；论坛/手册两侧
+    // 按 iOS 现状仍是本地匹配。搜索失败时静默回退本地，保证聚合结果不为空。
+    val query = keyword.trim()
+    var remoteFeed by remember { mutableStateOf<List<FeedItem>>(emptyList()) }
+    var isSearching by remember { mutableStateOf(false) }
+    LaunchedEffect(query) {
+        if (query.isEmpty()) {
+            remoteFeed = emptyList()
+            return@LaunchedEffect
+        }
+        isSearching = true
+        remoteFeed = runCatching {
+            feedStore.pool(query)
+        }.getOrDefault(emptyList())
+        isSearching = false
+    }
+
+    val results = remember(keyword, remoteFeed) {
+        if (remoteFeed.isNotEmpty()) {
+            // 线上有命中就直接用，避免本地 mock 匹配混进来。
+            search(keyword, feed = remoteFeed)
+        } else {
+            search(keyword)
+        }
+    }
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
@@ -144,6 +172,8 @@ fun SearchScreen(
                     onSelectWord = { keyword = it },
                     modifier = Modifier.fillMaxSize(),
                 )
+            } else if (results.isEmpty && isSearching) {
+                LoadingView(topPadding = 80.dp)
             } else if (results.isEmpty) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
@@ -190,12 +220,12 @@ fun SearchScreen(
  * 「通知」 hits the live `pool` search in the SwiftUI build; here it falls back
  * to the same local match so the aggregation behaves identically offline.
  */
-private fun search(rawKeyword: String): SearchResults {
+private fun search(rawKeyword: String, feed: List<FeedItem>? = null): SearchResults {
     val keyword = rawKeyword.trim()
     if (keyword.isEmpty()) return SearchResults(keyword, emptyList(), emptyList(), emptyList())
     return SearchResults(
         keyword = keyword,
-        feed = MockData.feedItems.filter { it.matches(keyword) },
+        feed = feed ?: MockData.feedItems.filter { it.matches(keyword) },
         forum = MockData.forumPosts.filter { it.matches(keyword) },
         handbook = MockData.handbookSections
             .flatMap { it.entries }

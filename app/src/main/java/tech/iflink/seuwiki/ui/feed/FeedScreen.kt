@@ -15,11 +15,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
@@ -28,6 +29,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -40,9 +42,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
-import tech.iflink.seuwiki.design.ContinuousRoundedShape
+import tech.iflink.seuwiki.data.toFeedProfile
 import tech.iflink.seuwiki.design.ConsoleBar
+import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
@@ -51,6 +55,7 @@ import tech.iflink.seuwiki.models.FeedItem
 import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.ListBottomPadding
+import tech.iflink.seuwiki.ui.LoadingView
 import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.rows.FeedItemCard
@@ -128,6 +133,7 @@ data class FeedFilter(
 @Composable
 fun FeedScreen(
     profile: UserProfileStore,
+    store: FeedStore,
     onOpenProfile: () -> Unit,
     onOpenItem: (String) -> Unit,
 ) {
@@ -138,9 +144,14 @@ fun FeedScreen(
     }
     var showsFilter by remember { mutableStateOf(false) }
 
-    // `FeedStore` supplies these from seu-wiki-v2 once wired in.
-    val allItems = remember { MockData.feedItems }
-    val forYouItems = remember { MockData.feedItems.filter { it.isSelected } }
+    // 画像只取 for-you 用到的四个字段，profile 变化时才重建。
+    val feedProfile = remember(profile.college, profile.degree, profile.grade, profile.interests) {
+        profile.toFeedProfile()
+    }
+
+    // 首次进入某个 scope 时拉一次；已加载过的 scope 直接复用缓存的分页状态。
+    LaunchedEffect(scopeKey) { store.loadIfNeeded(scope, feedProfile) }
+    val page = store.page(scope)
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
@@ -182,10 +193,11 @@ fun FeedScreen(
                 title = { it.title },
             )
 
-            val visible = when (scope) {
-                FeedScope.ForYou -> forYouItems
-                FeedScope.All -> allItems.filter { filter.matches(it, profile) }
-                is FeedScope.Category -> allItems.filter { it.category == scope.category }
+            // 筛选只在「全部」下生效，与 SwiftUI 的 allItems 一致。
+            val visible = if (scope == FeedScope.All) {
+                page.items.filter { filter.matches(it, profile) }
+            } else {
+                page.items
             }
             val emptyMessage = when (scope) {
                 FeedScope.All ->
@@ -194,7 +206,9 @@ fun FeedScreen(
                 FeedScope.ForYou -> "暂时没有为你精选的资讯"
             }
 
-            if (visible.isEmpty()) {
+            if (visible.isEmpty() && page.isLoading) {
+                LoadingView(topPadding = 80.dp)
+            } else if (visible.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
                         title = "暂无资讯",
@@ -219,12 +233,24 @@ fun FeedScreen(
                     ),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    if (page.isOffline) { item(key = "offline") { FeedOfflineBanner() } }
+
                     items(visible, key = { it.id }) { item ->
                         if (scope == FeedScope.ForYou) {
                             ForYouCard(item = item, onClick = { onOpenItem(item.id) })
                         } else {
                             FeedItemCard(item = item, onClick = { onOpenItem(item.id) })
                         }
+                    }
+
+                    if (page.isLoadingMore) {
+                        item(key = "loadingMore") { LoadingView(topPadding = 24.dp) }
+                    }
+                }
+                // 滚到底加载下一页，对应 SwiftUI 的 `.onAppear { if item.id == last { loadMore } }`。
+                LaunchedEffect(visible.size, page.nextCursor) {
+                    if (visible.isNotEmpty() && page.nextCursor != null) {
+                        store.loadMore(scope, feedProfile)
                     }
                 }
             }
@@ -455,3 +481,36 @@ private val FeedFilterSaver = Saver<FeedFilter, String>(
         )
     },
 )
+
+/**
+ * 网络失败时的轻量提示，对应 `FeedOfflineBanner`。
+ *
+ * 不阻塞浏览：列表此时显示的是 MockData 回退内容。
+ */
+@Composable
+private fun FeedOfflineBanner() {
+    val colors = SeuTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(CircleShape)
+            .background(colors.tertiaryFill)
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = SeuIcons.of("wifi.slash"),
+            contentDescription = null,
+            tint = colors.secondaryLabel,
+            modifier = Modifier.size(13.dp),
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(
+            text = "暂时无法连接服务器，显示离线示例内容",
+            style = SeuType.Caption,
+            color = colors.secondaryLabel,
+        )
+    }
+}
+

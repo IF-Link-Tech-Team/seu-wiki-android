@@ -42,6 +42,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
@@ -124,6 +125,8 @@ object Routes {
 fun RootView() {
     val context = LocalContext.current
     val profile = remember { UserProfileStore(context.applicationContext) }
+    // 资讯侧接 seu.wiki 线上接口；论坛/手册/工具/个人页按 iOS 现状仍是本地数据。
+    val feedStore = remember { FeedStore() }
     val navController = rememberNavController()
 
     val backStack by navController.currentBackStack.collectAsStateWithLifecycle()
@@ -148,6 +151,7 @@ fun RootView() {
             composable(AppTab.Home.route) {
                 HomeScreen(
                     profile = profile,
+                    feedStore = feedStore,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenFeedList = { navController.navigate(Routes.HOME_FEED_LIST) },
                     onOpenForumList = { navController.navigate(Routes.HOME_FORUM_LIST) },
@@ -158,6 +162,7 @@ fun RootView() {
             composable(AppTab.Feed.route) {
                 FeedScreen(
                     profile = profile,
+                    store = feedStore,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenItem = { navController.navigate(Routes.feedDetail(it)) },
                 )
@@ -180,6 +185,7 @@ fun RootView() {
             }
             composable(AppTab.Search.route) {
                 SearchScreen(
+                    feedStore = feedStore,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
                     onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
@@ -214,6 +220,7 @@ fun RootView() {
             ) { entry ->
                 FeedItemDetailScreen(
                     profile = profile,
+                    store = feedStore,
                     itemId = entry.arguments?.getString("id").orEmpty(),
                     onBack = { navController.popBackStack() },
                 )

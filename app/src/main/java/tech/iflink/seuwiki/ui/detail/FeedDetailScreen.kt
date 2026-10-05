@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -34,6 +35,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -48,19 +50,24 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import tech.iflink.seuwiki.data.FeedStore
+import tech.iflink.seuwiki.data.RemoteFeedDetail
 import tech.iflink.seuwiki.data.UserProfileStore
+import tech.iflink.seuwiki.data.campusHtmlToAnnotatedString
 import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.CampusReminder
+import tech.iflink.seuwiki.models.FeedCategory
 import tech.iflink.seuwiki.models.FeedItem
 import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.DetailHeader
 import tech.iflink.seuwiki.ui.EmptyStateView
-import tech.iflink.seuwiki.ui.TabBarClearance
 import tech.iflink.seuwiki.ui.Format
+import tech.iflink.seuwiki.ui.LoadingView
+import tech.iflink.seuwiki.ui.TabBarClearance
 import tech.iflink.seuwiki.ui.TabPage
 
 /**
@@ -77,15 +84,58 @@ import tech.iflink.seuwiki.ui.TabPage
 @Composable
 fun FeedItemDetailScreen(
     profile: UserProfileStore,
+    store: FeedStore,
     itemId: String,
     onBack: () -> Unit,
 ) {
-    val item = remember(itemId) { MockData.feedItems.firstOrNull { it.id == itemId } }
+    // 路由只带 id；条目从 Store 已加载的列表状态里反查，查不到时下面的 detail
+    // 请求会补出标题/摘要，够冷启动或深链进入时渲染。
+    val listed = remember(itemId) { store.findItem(itemId) ?: MockData.feedItems.firstOrNull { it.id == itemId } }
+    var detail by remember(itemId) { mutableStateOf<RemoteFeedDetail?>(null) }
+    var isLoadingDetail by remember(itemId) { mutableStateOf(false) }
+
+    LaunchedEffect(itemId) {
+        if (detail == null) {
+            isLoadingDetail = true
+            try {
+                detail = store.detail(
+                    listed ?: FeedItem(
+                        id = itemId,
+                        title = "",
+                        summary = "",
+                        sourceName = "",
+                        category = FeedCategory.News,
+                    ),
+                )
+            } catch (_: Exception) {
+                // 静默回退：继续展示列表里那条的摘要，与 SwiftUI 的 `try?` 一致。
+            } finally {
+                isLoadingDetail = false
+            }
+        }
+    }
+
+    // listed 为空（冷启动深链 / 列表未加载）时，等 detail 到达后用它的字段拼一条
+    // 能渲染的条目；连 detail 都没有才真的没这条资讯。
+    val item: FeedItem? = listed ?: detail?.let { d ->
+        FeedItem(
+            id = itemId,
+            title = d.originalTitle?.takeIf { it.isNotBlank() } ?: d.summary.orEmpty(),
+            summary = d.summary ?: d.reason.orEmpty(),
+            sourceName = "",
+            category = FeedCategory.News,
+            originalUrl = d.originalUrl,
+        )
+    }
     if (item == null) {
         TabPage {
             Column {
                 DetailHeader(title = "资讯", onBack = onBack)
-                EmptyStateView(title = "资讯不存在", description = "这条资讯可能已被移除")
+                if (isLoadingDetail) {
+                    LoadingView(topPadding = 80.dp)
+                } else {
+                    EmptyStateView(title = "资讯不存在", description = "这条资讯可能已被移除")
+                }
             }
         }
         return
@@ -94,10 +144,15 @@ fun FeedItemDetailScreen(
     val colors = SeuTheme.colors
     val uriHandler = LocalUriHandler.current
     var showsReminderEditor by rememberSaveable { mutableStateOf(false) }
+    // 列表响应不含 links.original，原文链接优先取详情接口下发的。
+    val originalUrl = detail?.originalUrl ?: item?.originalUrl
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = item.category.label, onBack = onBack)
+            DetailHeader(
+                title = detail?.originalTitle?.takeIf { it != item.title } ?: item.category.label,
+                onBack = onBack,
+            )
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -124,12 +179,39 @@ fun FeedItemDetailScreen(
 
                 item.audience.deadline?.let { DeadlineBanner(it) }
 
-                Text(
-                    text = item.summary,
-                    style = SeuType.Body,
-                    color = colors.label,
-                    lineHeight = SeuType.Body.fontSize * 1.35f,
-                )
+                // 详情接口有 body 就渲染白名单 HTML 正文，否则回退列表摘要。
+                val bodyHtml = detail?.bodyHtml
+                if (bodyHtml != null) {
+                    val parsed = remember(bodyHtml, colors.accent) {
+                        campusHtmlToAnnotatedString(bodyHtml, colors.accent)
+                    }
+                    Text(
+                        text = parsed.text,
+                        style = SeuType.Body,
+                        color = colors.label,
+                        lineHeight = SeuType.Body.fontSize * 1.35f,
+                    )
+                } else {
+                    Text(
+                        text = detail?.summary ?: item.summary,
+                        style = SeuType.Body,
+                        color = colors.label,
+                        lineHeight = SeuType.Body.fontSize * 1.35f,
+                    )
+                }
+
+                if (isLoadingDetail) {
+                    Box(
+                        Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            color = colors.secondaryLabel,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    }
+                }
 
                 if (item.tags.isNotEmpty()) {
                     TagChips(item.tags)
@@ -137,8 +219,8 @@ fun FeedItemDetailScreen(
             }
 
             ActionBar(
-                canOpenWeb = item.originalUrl != null,
-                onOpenWeb = { item.originalUrl?.let(uriHandler::openUri) },
+                canOpenWeb = originalUrl != null,
+                onOpenWeb = { originalUrl?.let(uriHandler::openUri) },
                 onSetReminder = { showsReminderEditor = true },
             )
         }
@@ -456,3 +538,4 @@ private fun ReminderEditSheet(
 }
 
 private const val DAY_MS = 24L * 60 * 60 * 1000
+
