@@ -35,6 +35,16 @@ data class CampusReminder(
     val advanceDays: Int = 1,
     val note: String = "",
     val relatedItemId: String? = null,
+    /**
+     * 提醒当天的触发时刻（本地时区的小时 / 分钟）。
+     *
+     * iOS 的 `ReminderScheduler` 把这个值写死成 9:00（「学生不会想被凌晨的提醒
+     * 炸醒」）。Android 侧保留了同样的默认值，但**让用户可改** —— 提醒走的是
+     * Material 3 的时间选择器，界面上得看得到、也改得动，否则存的是什么值和
+     * 什么时候响完全对不上号。
+     */
+    val fireHour: Int = DEFAULT_FIRE_HOUR,
+    val fireMinute: Int = 0,
 ) {
     val daysRemaining: Int
         get() {
@@ -45,6 +55,9 @@ data class CampusReminder(
         }
 
     companion object {
+        /** 与 iOS 一致的默认提醒时刻：当天 09:00。 */
+        const val DEFAULT_FIRE_HOUR = 9
+
         fun nowMs(): Long = System.currentTimeMillis()
 
         fun startOfDay(ms: Long): Long {

@@ -22,6 +22,20 @@
         android:networkSecurityConfig="@xml/network_security_config">
 
         <!--
+          本地提醒：AlarmManager 到点唤起 ReminderReceiver 发系统通知。
+
+          不是 exported —— 只有本应用才该拉起它；导出后任何 App 都能伪造一条
+          ACTION_FIRE 广播，凭空弹出通知。
+
+          没有注册 BOOT_COMPLETED 接收器是有意的：静态开机广播属于 Google Play
+          的白名单特权，普通应用申请不到。开机后靠冷启动时的
+          `UserProfileStore.reconcileReminderAlarms()` 对账补回闹钟。
+        -->
+        <receiver
+            android:name=".ReminderReceiver"
+            android:exported="false" />
+
+        <!--
           launchMode=singleTask：登录回调后要把既有 MainActivity 带回前台，
           CLEAR_TOP 才有实例可复用，否则会多出一个空的 MainActivity 压在原界面上。
         -->

@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,11 +36,19 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
+import androidx.compose.material3.TimePicker
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.wrapContentSize
+import tech.iflink.seuwiki.R
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -55,9 +64,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import tech.iflink.seuwiki.data.FeedStore
+import tech.iflink.seuwiki.data.ReminderScheduler
+import tech.iflink.seuwiki.ui.ReminderPermission
 import tech.iflink.seuwiki.data.RemoteFeedDetail
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.data.campusHtmlToAnnotatedString
@@ -255,8 +267,10 @@ fun FeedItemDetailScreen(
         ReminderEditSheet(
             item = item,
             onSave = { reminder ->
-                profile.addReminder(reminder)
+                // addReminder 负责落盘 + 排闹钟，返回排程结果给 sheet 如实回显。
+                val result = profile.addReminder(reminder)
                 showsReminderEditor = false
+                result
             },
             onDismiss = { showsReminderEditor = false },
         )
@@ -427,18 +441,28 @@ private fun ActionBar(
 /**
  * 设定提醒.
  *
- * Modelled on Apple Reminders: a title, a due date, how far ahead to fire, and
- * a free-form note. Saving appends to `profile.reminders`, which is what drives
- * the Home countdown card.
+ * Modelled on Apple Reminders: a title, a due date, how far ahead to fire, a
+ * time of day, and a free-form note.
+ *
+ * 日期与时间都用 **Material 3** 的 [DatePickerDialog] / [TimePickerDialog] ——
+ * 这正是 Android 平台规范的做法（iOS 是滚轮 `Picker`，那是平台差异，不该照抄）。
+ *
+ * 保存时除了落盘（[UserProfileStore.addReminder]）还会真的排上闹钟
+ * （[ReminderScheduler.schedule]），并把「精确 / 窗口式 / 没排上」的结果如实回显 ——
+ * 静默失败过一次：界面上写着「已添加提醒」，到点却什么都不会发生。
  */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ReminderEditSheet(
     item: FeedItem,
-    onSave: (CampusReminder) -> Unit,
+    onSave: (CampusReminder) -> ReminderScheduler.ScheduleResult?,
     onDismiss: () -> Unit,
 ) {
     val colors = SeuTheme.colors
+    val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
     var title by rememberSaveable(item.id) { mutableStateOf(item.title) }
     var note by rememberSaveable(item.id) { mutableStateOf("") }
     var advanceDays by rememberSaveable(item.id) { mutableIntStateOf(1) }
@@ -446,7 +470,27 @@ private fun ReminderEditSheet(
     var dueDate by rememberSaveable(item.id) {
         mutableLongStateOf(item.audience.deadline ?: (System.currentTimeMillis() + DAY_MS))
     }
+    // 提醒当天的触发时刻。与 iOS 的默认 9:00 一致，但允许用户改。
+    var fireHour by rememberSaveable(item.id) { mutableIntStateOf(CampusReminder.DEFAULT_FIRE_HOUR) }
+    var fireMinute by rememberSaveable(item.id) { mutableIntStateOf(0) }
     var showsDatePicker by rememberSaveable { mutableStateOf(false) }
+    var showsTimePicker by rememberSaveable { mutableStateOf(false) }
+
+    // POST_NOTIFICATIONS 是运行时权限（API 33+），没授权时排了闹钟也不会弹通知。
+    // 这里显式查一次并把状态摆到界面上，而不是让用户等一整天才发现白设了。
+    var hasNotificationPermission by remember {
+        mutableStateOf(ReminderPermission.hasPermission(context))
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        hasNotificationPermission = granted
+        if (!granted) {
+            scope.launch {
+                snackbarHostState.showSnackbar(context.getString(R.string.reminder_needs_permission))
+            }
+        }
+    }
 
     val advanceOptions = listOf(
         0 to "当天",
@@ -455,6 +499,15 @@ private fun ReminderEditSheet(
         3 to "提前 3 天",
         7 to "提前 1 周",
     )
+
+    // 提醒日 = 截止日往前推 advanceDays 天。把「提前量」直接并进截止时间展示，
+    // 用户才不会在截止 3 天前、提前量又是 3 天时算出「提醒日在今天之前」而困惑。
+    val reminderDay = remember(dueDate, advanceDays) {
+        val cal = java.util.Calendar.getInstance().apply { timeInMillis = dueDate }
+        cal.add(java.util.Calendar.DAY_OF_YEAR, -advanceDays.coerceAtLeast(0))
+        cal.timeInMillis
+    }
+    val fireText = Format.clock(fireHour, fireMinute)
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -465,65 +518,107 @@ private fun ReminderEditSheet(
                 .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("设定提醒", style = SeuType.Title3, color = colors.label)
+            Text(
+                text = stringResource(R.string.reminder_set),
+                style = SeuType.Title3,
+                color = colors.label,
+            )
 
             OutlinedTextField(
                 value = title,
                 onValueChange = { title = it },
-                label = { Text("标题", style = SeuType.Caption) },
+                label = { Text(stringResource(R.string.reminder_title_label), style = SeuType.Caption) },
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
             )
 
-            OutlinedTextField(
+            // 截止日期 —— Material 3 DatePicker。
+            ReadOnlyField(
+                label = stringResource(R.string.reminder_due_label),
                 value = Format.dateTime(dueDate),
-                onValueChange = {},
-                readOnly = true,
-                label = { Text("截止时间", style = SeuType.Caption) },
-                trailingIcon = {
-                    Icon(
-                        imageVector = SeuIcons.of("clock.badge.exclamationmark"),
-                        contentDescription = null,
-                        tint = colors.secondaryLabel,
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clickable { showsDatePicker = true },
-                    )
-                },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { showsDatePicker = true },
+                iconKey = "calendar.day.timeline.left",
+                contentDescription = stringResource(R.string.cd_reminder_channel_date),
+                onClick = { showsDatePicker = true },
             )
 
-            Text("提前提醒", style = SeuType.Footnote, color = colors.secondaryLabel)
-            // Wraps rather than scrolls: iOS uses a `Picker`, which always shows
-            // all five segments, and a plain Row clipped the last chip off the
-            // right edge on a 1080px-wide screen.
+            // 提醒时刻 —— Material 3 TimePicker（时钟面，不是滚轮）。
+            ReadOnlyField(
+                label = stringResource(R.string.reminder_fire_time_label),
+                value = fireText,
+                iconKey = "clock.badge.exclamationmark",
+                contentDescription = stringResource(R.string.cd_reminder_channel_time),
+                onClick = { showsTimePicker = true },
+            )
+
+            Text(
+                text = stringResource(R.string.reminder_advance_label),
+                style = SeuType.Footnote,
+                color = colors.secondaryLabel,
+            )
+            // Wraps rather than scrolls: 5 个 chip 一行放不下时会挤掉最后一个。
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 advanceOptions.forEach { (days, label) ->
                     val selected = days == advanceDays
                     Text(
                         text = label,
                         style = if (selected) SeuType.SubheadlineSemibold else SeuType.Subheadline,
-                        color = if (selected) Color.White else colors.label,
+                        // 选中态的底色是 accent，文字必须用 onAccentInverted：
+                        // 深色模式下亮绿压白字只有 1.83:1（见 SeuColorScheme）。
+                        color = if (selected) colors.onAccentInverted else colors.label,
                         maxLines = 1,
                         modifier = Modifier
                             .clip(CircleShape)
                             .background(if (selected) colors.accent else colors.tertiaryFill)
                             .clickable { advanceDays = days }
-                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                            // 48dp 触控目标：chip 的视觉高度只有 ~30dp，
+                            // 原先靠 padding(vertical=8dp) 只有 ~30dp，低于无障碍下限。
+                            .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                            .padding(horizontal = 8.dp, vertical = 8.dp)
+                            .wrapContentSize(),
                     )
                 }
             }
 
+            Text(
+                // 只显示**日期** + 提醒时刻。原来用 dateTime 把截止时间自带的
+                // 时分也带上了，出来是「10月7日 1:17 1:25 提醒」这种自相矛盾的东西 ——
+                // 1:17 是创建提醒的时刻，跟提醒几点响毫无关系。
+                text = "将在 ${Format.date(reminderDay)} $fireText 提醒",
+                style = SeuType.Footnote,
+                color = colors.secondaryLabel,
+            )
+
             OutlinedTextField(
                 value = note,
                 onValueChange = { note = it },
-                label = { Text("备注", style = SeuType.Caption) },
+                label = { Text(stringResource(R.string.reminder_note_label), style = SeuType.Caption) },
                 minLines = 3,
                 maxLines = 6,
                 modifier = Modifier.fillMaxWidth(),
             )
+
+            if (!hasNotificationPermission) {
+                // 明确状态，而不是静默失败：用户以为设好了，其实到点不会响。
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.reminder_needs_permission),
+                        style = SeuType.Footnote,
+                        color = colors.orange,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = {
+                            permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                        },
+                    ) {
+                        Text(stringResource(R.string.reminder_request_permission))
+                    }
+                }
+            }
 
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedButton(
@@ -531,32 +626,57 @@ private fun ReminderEditSheet(
                     shape = CircleShape,
                     modifier = Modifier
                         .weight(1f)
-                        .height(46.dp),
-                ) { Text("取消", style = SeuType.SubheadlineMedium) }
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text(stringResource(R.string.reminder_cancel), style = SeuType.SubheadlineMedium)
+                }
                 Button(
                     onClick = {
-                        onSave(
-                            CampusReminder(
-                                id = "r-${item.id}-${System.currentTimeMillis()}",
-                                title = title.trim(),
-                                dueDate = dueDate,
-                                advanceDays = advanceDays,
-                                note = note.trim(),
-                                relatedItemId = item.id,
-                            ),
+                        val reminder = CampusReminder(
+                            id = "r-${item.id}-${System.currentTimeMillis()}",
+                            title = title.trim(),
+                            dueDate = dueDate,
+                            advanceDays = advanceDays,
+                            note = note.trim(),
+                            relatedItemId = item.id,
+                            fireHour = fireHour,
+                            fireMinute = fireMinute,
                         )
+                        // 落盘 + 排闹钟都在 addReminder 里，返回值如实反映排程结果。
+                        val result = onSave(reminder)
+                        // 如实回显，不假装一定准时。
+                        scope.launch {
+                            val message = when {
+                                !hasNotificationPermission -> context.getString(
+                                    R.string.reminder_needs_permission,
+                                )
+                                result == null || !result.scheduled ->
+                                    context.getString(R.string.reminder_schedule_failed)
+                                !result.isExact -> context.getString(R.string.reminder_scheduled_inexact)
+                                else -> context.getString(R.string.reminder_scheduled_exact)
+                            }
+                            snackbarHostState.showSnackbar(message)
+                        }
                     },
                     enabled = title.isNotBlank(),
                     shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = colors.accent,
+                        contentColor = colors.onAccentInverted,
+                    ),
                     modifier = Modifier
                         .weight(1f)
-                        .height(46.dp),
-                ) { Text("添加", style = SeuType.SubheadlineMedium) }
+                        .heightIn(min = 48.dp),
+                ) {
+                    Text(stringResource(R.string.reminder_add), style = SeuType.SubheadlineMedium)
+                }
             }
         }
+
+        SnackbarHost(hostState = snackbarHostState)
     }
 
+    // Material 3 的日期选择：对话框 + DatePicker，平台规范的做法。
     if (showsDatePicker) {
         val state = rememberDatePickerState(initialSelectedDateMillis = dueDate)
         DatePickerDialog(
@@ -565,14 +685,102 @@ private fun ReminderEditSheet(
                 TextButton(onClick = {
                     state.selectedDateMillis?.let { dueDate = it }
                     showsDatePicker = false
-                }) { Text("完成") }
+                }) { Text(stringResource(R.string.reminder_done)) }
             },
             dismissButton = {
-                TextButton(onClick = { showsDatePicker = false }) { Text("取消") }
+                TextButton(onClick = { showsDatePicker = false }) {
+                    Text(stringResource(R.string.reminder_cancel))
+                }
             },
         ) {
             DatePicker(state = state)
         }
+    }
+
+    // Material 3 的时间选择：时钟面 TimePicker。**不做** iOS 式滚轮 ——
+    // 那不是 Android 平台行为，照抄只会既不像 Material 也不像 iOS。
+    if (showsTimePicker) {
+        val state = rememberTimePickerState(
+            initialHour = fireHour,
+            initialMinute = fireMinute,
+            is24Hour = true,
+        )
+        // Material3 1.3.x 没有现成的 `TimePickerDialog` —— 它提供的是 `TimePicker`
+        // 与 `TimeInput`。官方推荐的做法就是用 `AlertDialog` 包一层时钟面，
+        // 这仍然完全是 Material 3 组件，**不是** iOS 式滚轮。
+        AlertDialog(
+            onDismissRequest = { showsTimePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    fireHour = state.hour
+                    fireMinute = state.minute
+                    showsTimePicker = false
+                }) { Text(stringResource(R.string.reminder_done)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showsTimePicker = false }) {
+                    Text(stringResource(R.string.reminder_cancel))
+                }
+            },
+            text = { TimePicker(state = state) },
+        )
+    }
+}
+
+/**
+ * 只读的可点击文本框，点它拉起 Material 3 选择器。
+ *
+ * **不能**直接把 `.clickable` 挂在 `OutlinedTextField` 的 modifier 上：
+ * TextField 自己带 pointer input，会把点击吃掉去聚焦自己的光标，外层的
+ * `clickable` 永远不会触发（实测：框会高亮，但日期/时间选择器根本没弹出来 ——
+ * 这个 bug 之前就存在，只是没人点那两下）。
+ *
+ * 做法是：把 TextField 置为 `enabled = false`（不再吃事件、也不再显示光标），
+ * 手动把 disabled 的配色改回正常态，再用一层 `matchParentSize` 的透明
+ * `clickable` 盖在上面。这样整个框都是点击区，也顺带满足了 48dp 触控目标。
+ */
+@Composable
+private fun ReadOnlyField(
+    label: String,
+    value: String,
+    iconKey: String,
+    contentDescription: String,
+    onClick: () -> Unit,
+) {
+    val colors = SeuTheme.colors
+    Box(modifier = Modifier.fillMaxWidth()) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = {},
+            readOnly = true,
+            enabled = false,
+            label = { Text(label, style = SeuType.Caption) },
+            trailingIcon = {
+                Icon(
+                    imageVector = SeuIcons.of(iconKey),
+                    contentDescription = contentDescription,
+                    tint = colors.secondaryLabel,
+                    modifier = Modifier.size(20.dp),
+                )
+            },
+            // enabled=false 默认会整体调暗，看起来像禁用态；这里改回与可输入字段
+            // 一致的配色，否则用户会以为这个框坏了点不动。
+            colors = OutlinedTextFieldDefaults.colors(
+                disabledTextColor = colors.label,
+                disabledBorderColor = colors.separator,
+                disabledLabelColor = colors.secondaryLabel,
+                disabledTrailingIconColor = colors.secondaryLabel,
+                disabledContainerColor = Color.Transparent,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp),
+        )
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .clickable(onClick = onClick),
+        )
     }
 }
 

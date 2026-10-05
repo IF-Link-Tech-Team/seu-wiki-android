@@ -33,10 +33,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import android.net.Uri
 import tech.iflink.seuwiki.data.AuthStore
+import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.CardColumn
 import tech.iflink.seuwiki.design.CardCornerRadius
@@ -606,13 +608,14 @@ private fun ReminderRow(reminder: CampusReminder, onRemove: () -> Unit) {
         Spacer(Modifier.width(4.dp))
         Icon(
             imageVector = SeuIcons.of("xmark"),
-            contentDescription = "删除提醒",
+            contentDescription = stringResource(R.string.reminder_delete),
             tint = colors.tertiaryLabel,
             modifier = Modifier
-                .size(24.dp)
-                .clip(ContinuousRoundedShape(12.dp))
-                .clickable(onClick = onRemove)
-                .padding(4.dp),
+                // 48dp 触控目标：图标本身 24dp + padding 4dp 只有 32dp，低于无障碍下限，
+                // 手指很难点准，而且这还是「删除」这种不可逆操作。
+                .size(48.dp)
+                .clip(ContinuousRoundedShape(24.dp))
+                .clickable(onClick = onRemove),
         )
     }
 }

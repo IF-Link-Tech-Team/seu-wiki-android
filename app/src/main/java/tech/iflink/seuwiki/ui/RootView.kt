@@ -45,6 +45,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.LaunchedEffect
+import tech.iflink.seuwiki.ReminderReceiver
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -176,7 +178,16 @@ object Routes {
  * from a detail page.
  */
 @Composable
-fun RootView() {
+fun RootView(
+    /**
+     * 点提醒通知要打开的资讯 id，null 表示没有待处理的深链。
+     *
+     * 消费后必须回调 [onPendingFeedItemConsumed] 置空 —— 否则进程重建时会拿同一个
+     * id 再跳一次，把用户拽回一个早已退出的详情页。
+     */
+    pendingFeedItemId: String? = null,
+    onPendingFeedItemConsumed: () -> Unit = {},
+) {
     val context = LocalContext.current
     // A-3：三个 store 都改成了 ViewModel，用 viewModel() 取而不是 remember{}。
     // remember 会在配置变更后重建实例（分页状态与手册缓存随之丢失，
@@ -192,6 +203,23 @@ fun RootView() {
     val feedStore: FeedStore = viewModel(factory = FeedStore.Factory)
     val docsStore: DocsStore = viewModel(factory = DocsStore.Factory)
     val navController = rememberNavController()
+
+    // 冷启动对账：补回被系统清掉的闹钟、撤掉已删除的提醒。
+    // 必须在提醒列表**已加载**之后跑，否则会把「还没读到」误判成「用户删了」。
+    LaunchedEffect(Unit) {
+        ReminderReceiver.ensureChannel(context.applicationContext)
+        profile.reconcileReminderAlarms()
+    }
+
+    // 点提醒通知 → 直接落到对应资讯详情。
+    // 走 navigate 而不是切换 tab：用户点的是「这一条通知」，不是「资讯 tab」。
+    LaunchedEffect(pendingFeedItemId) {
+        val itemId = pendingFeedItemId ?: return@LaunchedEffect
+        if (itemId.isNotBlank()) {
+            navController.navigate(Routes.feedDetail(itemId))
+        }
+        onPendingFeedItemConsumed()
+    }
 
     val backStack by navController.currentBackStack.collectAsStateWithLifecycle()
     val owningTab = remember(backStack) {

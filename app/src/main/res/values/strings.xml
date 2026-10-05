@@ -1,4 +1,37 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">SEU.wiki</string>
+
+    <!-- 本地提醒通知渠道 -->
+    <string name="reminder_channel_name">提醒</string>
+    <string name="reminder_channel_description">你在资讯详情里设定的截止提醒</string>
+
+    <!-- 提醒设置 -->
+    <string name="reminder_title_label">标题</string>
+    <string name="reminder_note_label">备注</string>
+    <string name="reminder_due_label">截止时间</string>
+    <string name="reminder_advance_label">提前提醒</string>
+    <string name="reminder_fire_time_label">提醒时刻</string>
+    <string name="reminder_add">添加</string>
+    <string name="reminder_cancel">取消</string>
+    <string name="reminder_done">完成</string>
+    <string name="reminder_pick_date">选择截止日期</string>
+    <string name="reminder_pick_time">选择提醒时刻</string>
+    <string name="reminder_set">设定提醒</string>
+    <string name="reminder_needs_permission">还没允许通知，提醒排了也不会弹出</string>
+    <string name="reminder_request_permission">允许通知</string>
+    <string name="reminder_scheduled_exact">已排程，到点会准时提醒</string>
+    <string name="reminder_scheduled_inexact">已排程，但本机未允许精确闹钟，到点可能有延迟</string>
+    <string name="reminder_schedule_failed">没能排上提醒，请检查系统的通知与闹钟权限</string>
+    <string name="reminder_schedule_past">这个时间点已经过去，没有排上提醒</string>
+    <string name="reminder_deleted">已删除提醒</string>
+    <string name="reminder_delete">删除提醒</string>
+
+    <string name="cd_reminder_channel_date">选择截止日期</string>
+    <string name="cd_reminder_channel_time">选择提醒时刻</string>
+    <string name="cd_back">返回</string>
+    <string name="cd_profile">个人页</string>
+    <string name="cd_filter">筛选</string>
+    <string name="cd_open_in_browser">在网页中打开</string>
+    <string name="cd_refresh">刷新</string>
 </resources>

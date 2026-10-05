@@ -58,4 +58,8 @@ object Format {
         if (s.length <= 3) return s
         return s.reversed().chunked(3).joinToString(",").reversed()
     }
+
+    /** `9:05` — 小时不补零、分钟补两位，与 iOS 的 `timeText(_:)` 一致。 */
+    fun clock(hour: Int, minute: Int): String =
+        "$hour:${minute.toString().padStart(2, '0')}"
 }

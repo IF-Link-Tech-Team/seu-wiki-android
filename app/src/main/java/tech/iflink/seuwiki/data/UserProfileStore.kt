@@ -9,10 +9,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.builtins.ListSerializer
-import kotlinx.serialization.builtins.serializer
-import kotlinx.serialization.json.Json
+import tech.iflink.seuwiki.ReminderReceiver
 import tech.iflink.seuwiki.models.CampusReminder
 import tech.iflink.seuwiki.models.Course
 
@@ -22,9 +19,10 @@ import tech.iflink.seuwiki.models.Course
  * The college / degree / grade / interests fields are the same `for-you` profile
  * parameters seu-wiki-v2 expects on `/api/site/for-you`.
  *
- * Persistence uses `SharedPreferences`, the direct counterpart of the iOS
- * `UserDefaults` store the SwiftUI `UserProfile` writes to, so the two clients
- * persist the same set of keys and can be reasoned about the same way.
+ * Persistence goes through [ProfilePersistence] — the counterpart of the iOS
+ * `ProfileStorage` — so both clients persist the same set of keys, record a
+ * schema version, and keep a `.corruptBackup` instead of silently discarding
+ * undecodable data.
  *
  * 现在是 [ViewModel]（A-3）。之前 `remember { UserProfileStore(context) }` 每次
  * 重组/配置变更都可能重建一个实例，构造时会重读一遍磁盘并**整体覆盖**字段 ——
@@ -35,9 +33,17 @@ import tech.iflink.seuwiki.models.Course
  */
 class UserProfileStore(
     private val prefs: SharedPreferences,
+    /**
+     * 排程用的 [android.content.Context]。
+     *
+     * 用 `applicationContext`（见 [factory]），所以不持有 Activity，
+     * ViewModelStore 清理时不会连带泄漏。提醒需要 Context 才能碰 AlarmManager，
+     * 这也是这里唯一保留它的理由。
+     */
+    private val appContext: Context? = null,
 ) : ViewModel() {
 
-    private val json = Json { ignoreUnknownKeys = true }
+    private val persistence = ProfilePersistence
 
     companion object {
         /**
@@ -47,10 +53,9 @@ class UserProfileStore(
          */
         fun factory(context: Context): ViewModelProvider.Factory {
             val app = context.applicationContext
+            val prefs = ProfilePersistence.open(context)
             return viewModelFactory {
-                initializer {
-                    UserProfileStore(app.getSharedPreferences("seu_wiki_profile", Context.MODE_PRIVATE))
-                }
+                initializer { UserProfileStore(prefs, app) }
             }
         }
         const val DEFAULT_COLLEGE = "信息科学与工程学院"
@@ -104,18 +109,19 @@ class UserProfileStore(
         private set
 
     init {
-        if (!prefs.getBoolean(KEY_INITIALIZED, false)) {
+        if (!persistence.isInitialized(prefs)) {
             saveAll()
-            prefs.edit().putBoolean(KEY_INITIALIZED, true).apply()
+            persistence.markInitialized(prefs)
         } else {
-            college = prefs.getString(KEY_COLLEGE, DEFAULT_COLLEGE) ?: DEFAULT_COLLEGE
-            degree = prefs.getString(KEY_DEGREE, DEFAULT_DEGREE) ?: DEFAULT_DEGREE
-            grade = prefs.getString(KEY_GRADE, DEFAULT_GRADE) ?: DEFAULT_GRADE
-            interests = decodeList(KEY_INTERESTS, DEFAULT_INTERESTS, String.serializer())
-            reminders = decodeList(KEY_REMINDERS, emptyList(), CampusReminder.serializer())
-            courses = decodeList(KEY_COURSES, emptyList(), Course.serializer())
-            followedTopicIds = prefs.getStringSet(KEY_FOLLOWED, emptySet()).orEmpty()
-            bookmarkedPostIds = prefs.getStringSet(KEY_BOOKMARKS, emptySet()) ?: emptySet()
+            val (savedCollege, savedDegree, savedGrade) = persistence.readProfileStrings(prefs)
+            college = savedCollege ?: DEFAULT_COLLEGE
+            degree = savedDegree ?: DEFAULT_DEGREE
+            grade = savedGrade ?: DEFAULT_GRADE
+            interests = persistence.readInterests(prefs, DEFAULT_INTERESTS)
+            reminders = persistence.readReminders(prefs)
+            courses = persistence.readCourses(prefs)
+            followedTopicIds = persistence.readStringSet(prefs, KEY_FOLLOWED)
+            bookmarkedPostIds = persistence.readStringSet(prefs, KEY_BOOKMARKS)
         }
     }
 
@@ -155,28 +161,70 @@ class UserProfileStore(
         this.degree = degree
         this.grade = grade
         this.interests = interests
-        prefs.edit()
-            .putString(KEY_COLLEGE, college)
-            .putString(KEY_DEGREE, degree)
-            .putString(KEY_GRADE, grade)
-            .putString(KEY_INTERESTS, encodeList(interests, String.serializer()))
-            .apply()
+        persistence.writeProfileStrings(prefs, college, degree, grade, interests)
     }
 
-    fun addReminder(reminder: CampusReminder) {
+    /**
+     * 新增一条提醒：落盘 + 真的排上闹钟。
+     *
+     * 返回排程结果（`isExact` / `scheduled`），界面据此**如实**告诉用户到点
+     * 会不会响、准不准。返回 null 表示没有 Context（构造时没给），只落盘没排 ——
+     * 调用方应把这种情况显示成「没能排上」，不能默认当成成功。
+     */
+    fun addReminder(reminder: CampusReminder): ReminderScheduler.ScheduleResult? {
         reminders = reminders + reminder
-        persist(KEY_REMINDERS, reminders, CampusReminder.serializer())
+        persistence.writeReminders(prefs, reminders)
+        // 排上闹钟：提醒不是只落个列表，到点要真的响（S-5）。
+        val ctx = appContext ?: return null
+        val result = ReminderScheduler.schedule(ctx, reminder)
+        if (!result.scheduled) {
+            // 没排上（时间已过 / 闹钟服务不可用）就不该留在列表里假装还提醒着。
+            reminders = reminders.filterNot { it.id == reminder.id }
+            persistence.writeReminders(prefs, reminders)
+        }
+        return result
+    }
+
+    /** 编辑既有提醒（改期 / 改提前量）：先撤旧的再排新的，避免响两次。 */
+    fun updateReminder(reminder: CampusReminder): ReminderScheduler.ScheduleResult? {
+        reminders = reminders.map { if (it.id == reminder.id) reminder else it }
+        persistence.writeReminders(prefs, reminders)
+        val ctx = appContext ?: return null
+        val result = ReminderScheduler.schedule(ctx, reminder)
+        if (!result.scheduled) {
+            reminders = reminders.filterNot { it.id == reminder.id }
+            persistence.writeReminders(prefs, reminders)
+        }
+        return result
     }
 
     fun removeReminder(id: String) {
         reminders = reminders.filterNot { it.id == id }
-        persist(KEY_REMINDERS, reminders, CampusReminder.serializer())
+        persistence.writeReminders(prefs, reminders)
+        appContext?.let {
+            ReminderScheduler.cancel(it, id)
+            ReminderReceiver.cancelNotification(it, id)
+        }
+    }
+
+    /**
+     * 冷启动对账：把落盘的提醒与已排闹钟对齐。
+     *
+     * 必须在**读到提醒之后**调用。必要场景：系统重启会清空所有闹钟（静态注册的
+     * `BOOT_COMPLETED` Receiver 是 Google Play 的白名单特权，普通应用拿不到，
+     * 所以只能靠冷启动这一次对账补回来）；用户在系统设置里清掉闹钟、或 App 被
+     * 系统回收导致闹钟被回收时同理。没有这一步，界面显示「有提醒」但到点一声不吭。
+     */
+    fun reconcileReminderAlarms() {
+        val ctx = appContext ?: return
+        ReminderScheduler.ensureSchemaVersion(ctx)
+        ReminderScheduler.reconcile(ctx, reminders)
     }
 
     /** Named `updateCourses` because the `courses` setter already takes a List. */
     fun updateCourses(newCourses: List<Course>) {
         courses = newCourses
-        persist(KEY_COURSES, courses, Course.serializer())
+        persistence.writeCourses(prefs, courses)
     }
 
     fun toggleFollowTopic(slug: String) {
@@ -185,7 +233,7 @@ class UserProfileStore(
         } else {
             followedTopicIds + slug
         }
-        prefs.edit().putStringSet(KEY_FOLLOWED, followedTopicIds).apply()
+        persistence.writeStringSet(prefs, KEY_FOLLOWED, followedTopicIds)
     }
 
     fun toggleBookmark(postId: String) {
@@ -194,11 +242,11 @@ class UserProfileStore(
         } else {
             bookmarkedPostIds + postId
         }
-        prefs.edit().putStringSet(KEY_BOOKMARKS, bookmarkedPostIds).apply()
+        persistence.writeStringSet(prefs, KEY_BOOKMARKS, bookmarkedPostIds)
     }
 
     fun resetToDefaults() {
-        prefs.edit().clear().putBoolean(KEY_INITIALIZED, true).apply()
+        persistence.reset(prefs)
         college = DEFAULT_COLLEGE
         degree = DEFAULT_DEGREE
         grade = DEFAULT_GRADE
@@ -230,34 +278,11 @@ class UserProfileStore(
 
     // --- persistence -------------------------------------------------------
 
-    private fun <T> decodeList(
-        key: String,
-        fallback: List<T>,
-        serializer: KSerializer<T>,
-    ): List<T> {
-        val raw = prefs.getString(key, null) ?: return fallback
-        return runCatching {
-            json.decodeFromString(ListSerializer(serializer), raw)
-        }.getOrDefault(fallback)
-    }
-
-    private fun <T> encodeList(value: List<T>, serializer: KSerializer<T>): String =
-        json.encodeToString(ListSerializer(serializer), value)
-
-    private fun <T> persist(key: String, value: List<T>, serializer: KSerializer<T>) {
-        prefs.edit().putString(key, encodeList(value, serializer)).apply()
-    }
-
     private fun saveAll() {
-        persist(KEY_INTERESTS, interests, String.serializer())
-        persist(KEY_REMINDERS, reminders, CampusReminder.serializer())
-        persist(KEY_COURSES, courses, Course.serializer())
-        prefs.edit()
-            .putString(KEY_COLLEGE, college)
-            .putString(KEY_DEGREE, degree)
-            .putString(KEY_GRADE, grade)
-            .putStringSet(KEY_FOLLOWED, followedTopicIds)
-            .putStringSet(KEY_BOOKMARKS, bookmarkedPostIds)
-            .apply()
+        persistence.writeProfileStrings(prefs, college, degree, grade, interests)
+        persistence.writeReminders(prefs, reminders)
+        persistence.writeCourses(prefs, courses)
+        persistence.writeStringSet(prefs, KEY_FOLLOWED, followedTopicIds)
+        persistence.writeStringSet(prefs, KEY_BOOKMARKS, bookmarkedPostIds)
     }
 }
