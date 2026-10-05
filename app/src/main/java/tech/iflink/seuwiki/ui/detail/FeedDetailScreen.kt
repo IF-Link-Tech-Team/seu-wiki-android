@@ -1,5 +1,6 @@
 package tech.iflink.seuwiki.ui.detail
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -58,6 +59,7 @@ import tech.iflink.seuwiki.models.FeedItem
 import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.DetailHeader
 import tech.iflink.seuwiki.ui.EmptyStateView
+import tech.iflink.seuwiki.ui.TabBarClearance
 import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.TabPage
 
@@ -100,7 +102,8 @@ fun FeedItemDetailScreen(
                 modifier = Modifier
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
-                    .padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                    // `.padding()` around the VStack in the SwiftUI body.
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 Row(
@@ -236,6 +239,9 @@ private fun TagChips(tags: List<String>) {
 /**
  * The bottom bar: `.bordered` 「在网页中打开」 leading, `.borderedProminent`
  * 「设定提醒」 trailing, each taking half the width.
+ *
+ * Both sit above the floating tab bar rather than at the window edge, matching
+ * the iOS stack where the action row is pinned and the tab bar floats under it.
  */
 @Composable
 private fun ActionBar(
@@ -249,13 +255,23 @@ private fun ActionBar(
             .fillMaxWidth()
             .background(if (colors.isDark) Color(0xF21C1C1E) else Color(0xF2FFFFFF))
             .navigationBarsPadding()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = TabBarClearance),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        OutlinedButton(
+        // `.bordered` keeps the accent tint; the stock Material outline button
+        // would pick up the neutral scheme outline instead.
+        Button(
             onClick = onOpenWeb,
             enabled = canOpenWeb,
             shape = CircleShape,
+            border = BorderStroke(1.dp, if (canOpenWeb) colors.accent else colors.separator),
+            colors = ButtonDefaults.outlinedButtonColors(
+                containerColor = Color.Transparent,
+                contentColor = colors.accent,
+                disabledContainerColor = Color.Transparent,
+                disabledContentColor = colors.tertiaryLabel,
+            ),
+            elevation = null,
             modifier = Modifier
                 .weight(1f)
                 .height(50.dp),

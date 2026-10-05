@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,7 +21,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -29,15 +30,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import tech.iflink.seuwiki.data.UserProfileStore
@@ -112,8 +114,11 @@ object Routes {
  *
  * The SwiftUI root is a `TabView`; here a `NavHost` plays that role so each tab
  * keeps its own back stack, and the tab bar sits on top as a floating capsule.
- * The bar is hidden on pushed screens, which is the Android equivalent of iOS
- * replacing the tab bar with a back button once you navigate deeper.
+ *
+ * Like `TabView`, the bar stays on screen for screens pushed *inside* a tab — a
+ * feed detail, a topic, the timetable — and the active item follows whichever
+ * tab's stack you are on rather than disappearing, so `switchTab` still works
+ * from a detail page.
  */
 @Composable
 fun RootView() {
@@ -121,9 +126,13 @@ fun RootView() {
     val profile = remember { UserProfileStore(context.applicationContext) }
     val navController = rememberNavController()
 
-    val backStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = backStackEntry?.destination?.route
-    val isTabRoot = AppTab.entries.any { it.route == currentRoute }
+    val backStack by navController.currentBackStack.collectAsStateWithLifecycle()
+    val owningTab = remember(backStack) {
+        backStack.asReversed()
+            .firstNotNullOfOrNull { entry ->
+                AppTab.entries.firstOrNull { it.route == entry.destination.route }
+            } ?: AppTab.Home
+    }
 
     Box(
         Modifier
@@ -282,13 +291,11 @@ fun RootView() {
             }
         }
 
-        if (isTabRoot) {
-            FloatingTabBar(
-                selected = AppTab.entries.firstOrNull { it.route == currentRoute } ?: AppTab.Home,
-                onSelect = { navController.switchTab(it) },
-                modifier = Modifier.align(Alignment.BottomCenter),
-            )
-        }
+        FloatingTabBar(
+            selected = owningTab,
+            onSelect = { navController.switchTab(it) },
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
     }
 }
 
@@ -314,22 +321,24 @@ private fun FloatingTabBar(
     // Translucent so content scrolling underneath reads as "behind glass",
     // matching the iOS tab bar's material treatment.
     val surface = if (colors.isDark) Color(0xF21C1C1E) else Color(0xF2FFFFFF)
-    val border = if (colors.isDark) Color(0x1FFFFFFF) else Color(0x1F000000)
+    val border = if (colors.isDark) Color(0x1FFFFFFF) else Color(0x14000000)
+    val shadow = if (colors.isDark) Color(0x40000000) else Color(0x1F3C3C43)
+    val shape = RoundedCornerShape(TabBarHeight / 2)
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .background(colors.groupedBackground)
             .windowInsetsPadding(WindowInsets.navigationBars)
             .padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(58.dp)
-                .clip(RoundedCornerShape(50))
+                .height(TabBarHeight)
+                .shadow(8.dp, shape, ambientColor = shadow, spotColor = shadow)
+                .clip(shape)
                 .background(surface)
-                .border(1.dp, border, RoundedCornerShape(50)),
+                .border(1.dp, border, shape),
             horizontalArrangement = Arrangement.SpaceEvenly,
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -338,13 +347,28 @@ private fun FloatingTabBar(
                     tab = tab,
                     selected = tab == selected,
                     onClick = { onSelect(tab) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
                 )
             }
         }
     }
 }
 
+/** The floating capsule reads ~58pt tall on every iPhone; 58dp matches it. */
+private val TabBarHeight = 58.dp
+
+/**
+ * One tab.
+ *
+ * The SwiftUI root never draws this itself — it hands the labels to the system
+ * `TabView`, and iOS 26 renders a glass capsule with a full-height rounded fill
+ * behind the active item, covering icon *and* caption. Measured off the
+ * simulator: the pill is 63pt tall (the whole bar) and ~76pt wide for a
+ * two-character label, filled with a neutral 15% black rather than a tinted
+ * accent, and inactive items stay in the primary label colour instead of grey.
+ */
 @Composable
 private fun TabItem(
     tab: AppTab,
@@ -354,48 +378,62 @@ private fun TabItem(
 ) {
     val colors = SeuTheme.colors
     val tint by animateColorAsState(
-        targetValue = if (selected) colors.accent else colors.secondaryLabel,
+        targetValue = if (selected) colors.accent else colors.label,
         animationSpec = tween(220),
         label = "tabTint",
     )
-    val indicator by animateDpAsState(
-        targetValue = if (selected) 40.dp else 0.dp,
+    val fill by animateColorAsState(
+        targetValue = if (selected) {
+            if (colors.isDark) Color(0x24FFFFFF) else Color(0x26000000)
+        } else {
+            Color.Transparent
+        },
         animationSpec = tween(220),
-        label = "tabIndicator",
+        label = "tabFill",
     )
-    val indicatorAlpha by animateColorAsState(
-        targetValue = if (selected) colors.accent.copy(alpha = 0.14f) else Color.Transparent,
+    // The pill widens around the label when selected, which is what sells the
+    // "the glass moves between tabs" read of the iOS bar.
+    val inset by animateDpAsState(
+        targetValue = if (selected) 16.dp else 9.dp,
         animationSpec = tween(220),
-        label = "tabIndicatorAlpha",
+        label = "tabInset",
     )
 
-    Column(
+    Box(
         modifier = modifier.clickable(
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
             onClick = onClick,
         ),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+        contentAlignment = Alignment.Center,
     ) {
+        // The pill runs the full height of the bar rather than hugging the two
+        // lines of content — that tall shape is what makes the iOS bar read as
+        // one sliding pill instead of five separate highlights.
         Box(
             modifier = Modifier
-                .size(width = indicator.coerceAtLeast(38.dp), height = 30.dp)
-                .clip(CircleShape)
-                .background(indicatorAlpha),
+                .fillMaxHeight()
+                .padding(vertical = 2.dp)
+                .clip(RoundedCornerShape(50))
+                .background(fill)
+                .padding(horizontal = inset),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(
-                imageVector = tab.icon,
-                contentDescription = tab.label,
-                tint = tint,
-                modifier = Modifier.size(22.dp),
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    imageVector = tab.icon,
+                    contentDescription = tab.label,
+                    tint = tint,
+                    modifier = Modifier.size(24.dp),
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = tab.label,
+                    style = SeuType.TabLabel,
+                    color = tint,
+                    maxLines = 1,
+                )
+            }
         }
-        Text(
-            text = tab.label,
-            style = SeuType.Caption,
-            color = tint,
-        )
     }
 }

@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -99,7 +101,12 @@ fun HomeScreen(
  *
  * `IntrinsicSize.Min` on the row reproduces the SwiftUI
  * `.fixedSize(horizontal: false, vertical: true)` on the `HStack`, which makes
- * both cards exactly as tall as the taller one.
+ * both cards exactly as tall as the taller one: SwiftUI proposes the tallest
+ * child's height to every sibling, and each card's trailing
+ * `Spacer(minLength: 0)` swallows the slack. Compose needs `fillMaxHeight()`
+ * on each tile (weight only distributes width in a `Row`) plus the same
+ * flexible spacer, otherwise the shorter tile stops short and the two bottom
+ * edges go out of alignment.
  */
 @Composable
 private fun BentoRow(profile: UserProfileStore) {
@@ -111,11 +118,15 @@ private fun BentoRow(profile: UserProfileStore) {
     ) {
         ReminderCard(
             reminder = profile.nextReminder,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
         )
         NextCourseCard(
             course = profile.nextCourse,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
         )
     }
 }
@@ -162,6 +173,8 @@ private fun ReminderCard(reminder: CampusReminder?, modifier: Modifier = Modifie
                 color = colors.secondaryLabel,
             )
         }
+        // `Spacer(minLength: 0)` — keeps the card flush to the taller sibling.
+        Spacer(Modifier.weight(1f))
     }
 }
 
@@ -200,6 +213,8 @@ private fun NextCourseCard(course: Course?, modifier: Modifier = Modifier) {
                 color = colors.secondaryLabel,
             )
         }
+        // `Spacer(minLength: 0)` — keeps the card flush to the taller sibling.
+        Spacer(Modifier.weight(1f))
     }
 }
 

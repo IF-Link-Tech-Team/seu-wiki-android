@@ -60,6 +60,7 @@ import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.Course
 import tech.iflink.seuwiki.models.MockData
 import tech.iflink.seuwiki.ui.DetailHeader
+import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.VSpace
@@ -171,7 +172,7 @@ fun TimetableScreen(
                         start = 16.dp,
                         end = 16.dp,
                         top = 4.dp,
-                        bottom = 24.dp,
+                        bottom = ListBottomPadding,
                     ),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
@@ -445,7 +446,7 @@ fun GPACalculatorScreen(onBack: () -> Unit) {
                         start = 16.dp,
                         end = 16.dp,
                         top = 4.dp,
-                        bottom = 24.dp,
+                        bottom = ListBottomPadding,
                     ),
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                 ) {

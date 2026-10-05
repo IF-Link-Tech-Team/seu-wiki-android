@@ -57,7 +57,7 @@ fun HandbookSectionScreen(
                 modifier = Modifier
                     .weight(1f)
                     .verticalScroll(rememberScrollState())
-                    .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 16.dp),
+                    .padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 16.dp),
             ) {
                 Column(Modifier.cardStyle(padding = 0.dp)) {
                     section.entries.forEachIndexed { index, entry ->

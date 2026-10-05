@@ -1,6 +1,7 @@
 package tech.iflink.seuwiki.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +17,7 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
@@ -37,9 +38,10 @@ import tech.iflink.seuwiki.design.SeuType
  * The large-title screen header.
  *
  * Reproduces a SwiftUI `NavigationStack` + `.navigationTitle(...)` large title
- * inside a `NavigationStack`, plus the iOS `profileEntry` toolbar button: the
- * title is 34pt bold at the leading edge and a circular avatar sits at the
- * trailing edge.
+ * with the iOS `profileEntry` toolbar button. The two do not share a row on
+ * iOS: the avatar is a trailing item of the navigation bar, which sits *above*
+ * the large title, and only collapses into it once the page scrolls. The static
+ * Compose equivalent keeps both, so the top of every tab reads the same.
  */
 @Composable
 fun ScreenHeader(
@@ -49,47 +51,63 @@ fun ScreenHeader(
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val colors = SeuTheme.colors
-    Row(
+    Column(
         modifier = modifier
             .fillMaxWidth()
             .background(colors.groupedBackground)
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .windowInsetsPadding(WindowInsets.statusBars),
     ) {
+        if (onProfileClick != null || trailing != null) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(44.dp)
+                    .padding(start = 16.dp, end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(Modifier.weight(1f))
+                if (trailing != null) {
+                    trailing()
+                    Box(Modifier.size(8.dp))
+                }
+                if (onProfileClick != null) {
+                    ProfileButton(onClick = onProfileClick)
+                }
+            }
+        }
         Text(
             text = title,
             style = SeuType.LargeTitle,
             color = colors.label,
+            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp),
         )
-        Box(Modifier.weight(1f))
-        if (trailing != null) {
-            trailing()
-            Box(Modifier.size(8.dp))
-        }
-        if (onProfileClick != null) {
-            ProfileButton(onClick = onProfileClick)
-        }
     }
 }
 
-/** The circular avatar entry pushed from the iOS `profileEntry` modifier. */
+/**
+ * The circular avatar entry pushed from the iOS `profileEntry` modifier.
+ *
+ * `Button("个人主页", systemImage: "person.crop.circle")` renders a solid person
+ * silhouette inside a glass disc, measured at 41pt with a hairline ring — not
+ * the outlined glyph in a plain circle.
+ */
 @Composable
 fun ProfileButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val colors = SeuTheme.colors
     Box(
         modifier = modifier
-            .size(36.dp)
+            .size(42.dp)
             .clip(CircleShape)
             .background(colors.secondaryGroupedBackground)
+            .border(1.dp, colors.label.copy(alpha = 0.12f), CircleShape)
             .clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
-            imageVector = Icons.Outlined.Person,
+            imageVector = Icons.Filled.Person,
             contentDescription = "个人页",
             tint = colors.label,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(22.dp),
         )
     }
 }
@@ -169,12 +187,24 @@ fun TabPage(content: @Composable () -> Unit) {
 val ListBottomPadding: Dp = 96.dp
 
 /**
+ * Room the floating tab bar claims at the bottom edge, excluding insets.
+ *
+ * Screens that pin something to the bottom — the feed detail's action row — sit
+ * *above* the bar rather than under it, the way an iOS pinned bar and the glass
+ * tab bar stack; they add this plus `navigationBarsPadding()`. Scrollable content
+ * keeps using [ListBottomPadding] instead, which already includes the inset.
+ */
+val TabBarClearance: Dp = 74.dp
+
+/**
  * Header for a pushed detail screen.
  *
  * The iOS equivalent is a `NavigationStack` push with
- * `.navigationBarTitleDisplayMode(.inline)`: a centred inline title with a
- * chevron-left back button. The tab bar is hidden on these screens, so the
- * header only has to clear the status bar.
+ * `.navigationBarTitleDisplayMode(.inline)`: the title is centred on the bar
+ * while the back control stays pinned to the leading edge, and the back control
+ * itself is a chevron in a hairline-ringed disc rather than a bare arrow.
+ * `IntrinsicSize` is not needed here — the bar is a fixed 44pt tall, matching
+ * the navigation bar iOS keeps on top of every pushed screen.
  */
 @Composable
 fun DetailHeader(
@@ -184,27 +214,39 @@ fun DetailHeader(
     trailing: (@Composable () -> Unit)? = null,
 ) {
     val colors = SeuTheme.colors
-    Row(
+    Box(
         modifier = modifier
             .fillMaxWidth()
             .background(colors.groupedBackground)
-            .windowInsetsPadding(WindowInsets.statusBars)
-            .padding(start = 8.dp, end = 16.dp, top = 6.dp, bottom = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
+            .windowInsetsPadding(WindowInsets.statusBars),
     ) {
-        Box(
+        Row(
             modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .clickable(onClick = onBack),
-            contentAlignment = Alignment.Center,
+                .fillMaxWidth()
+                .height(44.dp)
+                .padding(start = 8.dp, end = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = SeuIcons.of("chevron.left"),
-                contentDescription = "返回",
-                tint = colors.accent,
-                modifier = Modifier.size(20.dp),
-            )
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(colors.secondaryGroupedBackground)
+                    .border(1.dp, colors.label.copy(alpha = 0.12f), CircleShape)
+                    .clickable(onClick = onBack),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = SeuIcons.of("chevron.left"),
+                    contentDescription = "返回",
+                    tint = colors.label,
+                    modifier = Modifier.size(17.dp),
+                )
+            }
+            if (trailing != null) {
+                Box(Modifier.weight(1f))
+                trailing()
+            }
         }
         Text(
             text = title,
@@ -212,14 +254,11 @@ fun DetailHeader(
             color = colors.label,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
             modifier = Modifier
-                .weight(1f)
-                .padding(start = 4.dp),
+                .align(Alignment.Center)
+                .padding(horizontal = 56.dp),
         )
-        if (trailing != null) {
-            trailing()
-            Box(Modifier.size(8.dp))
-        }
     }
 }
 

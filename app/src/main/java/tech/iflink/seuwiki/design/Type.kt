@@ -63,6 +63,13 @@ object SeuType {
     /** `.caption2` — the smallest step, used by the topic cards' post counts. */
     val Caption2 = sf(11, FontWeight.Normal, 14, 0f)
     val Caption2Medium = sf(11, FontWeight.Medium, 14, 0f)
+
+    /**
+     * The tab-bar caption. The SwiftUI root hands its labels to the system
+     * `TabView`, which sets them at 10pt medium; measured off the simulator the
+     * glyph box lands at ~20pt wide for a two-character CJK label.
+     */
+    val TabLabel = sf(10, FontWeight.Medium, 13, 0.1f)
 }
 
 val SeuTypography = Typography(

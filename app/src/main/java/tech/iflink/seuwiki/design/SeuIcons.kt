@@ -12,6 +12,10 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -34,12 +38,9 @@ import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Flight
-import androidx.compose.material.icons.outlined.GridView
-import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.material.icons.outlined.Map
-import androidx.compose.material.icons.outlined.Newspaper
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Percent
 import androidx.compose.material.icons.outlined.Person
@@ -71,11 +72,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 object SeuIcons {
 
     private val bySymbol: Map<String, ImageVector> = mapOf(
-        // Tab bar
-        "house" to Icons.Outlined.Home,
-        "newspaper" to Icons.Outlined.Newspaper,
-        "bubble.left.and.text.bubble.right" to Icons.Outlined.ChatBubbleOutline,
-        "square.grid.2x2" to Icons.Outlined.GridView,
+        // Tab bar. The SF Symbols the SwiftUI root asks for all render in their
+        // default solid weight, so the tab glyphs map to the filled Material
+        // variants; `magnifyingglass` is the one outline in the set.
+        "house" to Icons.Filled.Home,
+        "newspaper" to Icons.Filled.Newspaper,
+        "bubble.left.and.text.bubble.right" to Icons.Filled.Forum,
+        "square.grid.2x2" to Icons.Filled.GridView,
         "magnifyingglass" to Icons.Filled.Search,
 
         // Feed categories
