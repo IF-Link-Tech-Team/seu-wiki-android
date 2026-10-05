@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -360,7 +361,7 @@ private fun ActionBar(
             contentPadding = PaddingValues(horizontal = 8.dp),
             modifier = Modifier
                 .weight(1f)
-                .height(50.dp),
+                .heightIn(min = 50.dp),
         ) {
             Icon(
                 imageVector = SeuIcons.of("safari"),
@@ -382,7 +383,7 @@ private fun ActionBar(
             contentPadding = PaddingValues(horizontal = 8.dp),
             modifier = Modifier
                 .weight(1f)
-                .height(50.dp),
+                .heightIn(min = 50.dp),
         ) {
             Icon(
                 imageVector = SeuIcons.of("bell.badge"),

@@ -342,7 +342,8 @@ private fun FloatingTabBar(
     val surface = if (colors.isDark) Color(0xF21C1C1E) else Color(0xF2FFFFFF)
     val border = if (colors.isDark) Color(0x1FFFFFFF) else Color(0x14000000)
     val shadow = if (colors.isDark) Color(0x40000000) else Color(0x1F3C3C43)
-    val shape = RoundedCornerShape(TabBarHeight / 2)
+    // 胶囊的圆角 = 半径，所以跟着栏体高度走（大字体下栏体长高，圆角也要跟着圆）。
+    val shape = RoundedCornerShape(tabBarHeight / 2)
 
     Column(
         modifier = modifier
@@ -353,8 +354,10 @@ private fun FloatingTabBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                // min 而非固定高：系统字体放大到 1.5× 时标签放不下，固定高会裁字。
-                .heightIn(min = TabBarHeight)
+                // 高度随字体缩放（见 ui/Screen.kt 的 tabBarHeight）：固定 58dp 在大字体下
+                // 会裁掉标签。上下都要有界 —— TabItem 用了 fillMaxHeight()，父容器若只给
+                // min 而不给 max，测量会拿到无界高度约束，整棵布局会塌掉。
+                .height(tabBarHeight)
                 .shadow(8.dp, shape, ambientColor = shadow, spotColor = shadow)
                 .clip(shape)
                 .background(surface)
@@ -375,9 +378,6 @@ private fun FloatingTabBar(
         }
     }
 }
-
-/** The floating capsule reads ~58pt tall on every iPhone; 58dp matches it. */
-private val TabBarHeight = 58.dp
 
 /**
  * One tab.

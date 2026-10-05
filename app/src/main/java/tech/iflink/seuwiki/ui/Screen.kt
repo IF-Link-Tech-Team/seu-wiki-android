@@ -30,6 +30,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import tech.iflink.seuwiki.design.GroupedBackground
 import tech.iflink.seuwiki.design.SeuIcons
@@ -195,6 +196,26 @@ val ListBottomPadding: Dp
         return TabBarClearance + 22.dp + navBottom
     }
 
+/** 悬浮 tab 栏在正常字体下的栏体高度。 */
+val TabBarBaseHeight: Dp = 58.dp
+
+/**
+ * 大字体（≥1.5×）时栏体的上限。
+ *
+ * 栏体内是「图标 + 文字」两行，固定高度会在大字体下裁掉标签，所以给一个上限让它
+ * 长高。**底部固定元素必须跟着这个值让位**，否则会像实测那样被压住 22dp。
+ */
+val TabBarMaxHeight: Dp = 96.dp
+
+/** 栏体在 `WindowInsets.navigationBars` 之外实际占的高度，供底部元素避让。 */
+val tabBarHeight: Dp
+    @Composable get() {
+        val scale = LocalDensity.current.fontScale
+        // 1.0× ~ 1.5× 之间线性增长，之后封顶。
+        val growth = ((scale - 1f) / 0.5f).coerceIn(0f, 1f)
+        return TabBarBaseHeight + (TabBarMaxHeight - TabBarBaseHeight) * growth
+    }
+
 /**
  * Room the floating tab bar claims at the bottom edge, excluding insets.
  *
@@ -202,8 +223,11 @@ val ListBottomPadding: Dp
  * *above* the bar rather than under it, the way an iOS pinned bar and the glass
  * tab bar stack; they add this plus `navigationBarsPadding()`. Scrollable content
  * keeps using [ListBottomPadding] instead, which already includes the inset.
+ *
+ * 必须是 composable：栏体高度随系统字体缩放变化，写死会在大字体下少让位。
  */
-val TabBarClearance: Dp = 74.dp
+val TabBarClearance: Dp
+    @Composable get() = tabBarHeight + 16.dp
 
 /**
  * Header for a pushed detail screen.
