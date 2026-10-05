@@ -1,5 +1,6 @@
 package tech.iflink.seuwiki.ui.profile
 
+import android.content.Intent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -235,7 +236,21 @@ private fun LoginRow(auth: AuthStore) {
                 runCatching {
                     CustomTabsIntent.Builder()
                         .setShowTitle(true)
+                        // 用户**点**的站外链接交给系统默认处理，而不是被 Custom Tab 自己吃掉。
+                        // 注意：它去不掉服务端 302 重定向时 Edge 弹的
+                        // 「callback 想要打开外部应用 SEU.wiki」确认框 —— 自定义 scheme 无法做
+                        // Digital Asset Links 校验，那一 tap 在 Android 上是去不掉的，
+                        // 要彻底消除只能改用已验证的 App Link（https 回调 + assetlinks.json）。
+                        .setSendToExternalDefaultHandlerEnabled(true)
                         .build()
+                        .apply {
+                            // 这两个 flag 是「授权完自动关掉 Custom Tab」的关键：
+                            // NO_HISTORY 让浏览器在 App 回到前台后不留在栈顶，
+                            // CLEAR_TOP 保证回到的是既有 MainActivity 而不是新建一个。
+                            // 缺了它们的表现是：回调早就处理完了，登录也成功了，
+                            // 但用户眼前只剩一片 Edge 的黑屏 —— 因为 Custom Tab 还压在上面。
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                        }
                         .launchUrl(context, Uri.parse(request.url))
                 }.onFailure {
                     auth.dismissError()

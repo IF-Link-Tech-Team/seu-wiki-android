@@ -13,10 +13,15 @@
         android:theme="@style/Theme.SEUWiki"
         android:networkSecurityConfig="@xml/network_security_config">
 
+        <!--
+          launchMode=singleTask：登录回调后要把既有 MainActivity 带回前台，
+          CLEAR_TOP 才有实例可复用，否则会多出一个空的 MainActivity 压在原界面上。
+        -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
+            android:launchMode="singleTask"
             android:theme="@style/Theme.SEUWiki"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
@@ -28,12 +33,19 @@
         <!--
           OIDC 回调落点，对应 iOS Info.plist 的 CFBundleURLTypes。
           scheme 必须与 AuthConfig.REDIRECT_SCHEME 一致（tech.iflink.seuwiki://callback）。
-          singleTask：浏览器跳回时不新建任务栈，MainActivity 走 onNewIntent。
+
+          singleTask + noHistory：Custom Tab 属于浏览器所在的任务栈，本 Activity 由浏览器
+          派发，若不留 noHistory，finish() 之后会重新露出下面的 Custom Tab —— 表现为
+          「登录其实成功了，但眼前只剩一片浏览器黑屏」。noHistory 让它处理完即出栈，
+          真正的「回到 App」由 [AuthCallbackActivity] 显式拉起 MainActivity 完成。
+          excludeFromRecents：它不渲染任何 UI，不该出现在最近任务里。
         -->
         <activity
             android:name=".AuthCallbackActivity"
+            android:excludeFromRecents="true"
             android:exported="true"
             android:launchMode="singleTask"
+            android:noHistory="true"
             android:theme="@style/Theme.SEUWiki">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
