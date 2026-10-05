@@ -40,6 +40,8 @@ import tech.iflink.seuwiki.design.GroupedBackground
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 
 /**
  * The large-title screen header.
@@ -86,7 +88,12 @@ fun ScreenHeader(
             text = title,
             style = SeuType.LargeTitle,
             color = colors.label,
-            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp),
+            modifier = Modifier
+                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 12.dp)
+                // 页面大标题对读屏来说是「这一屏的主题」，不是普通文本。
+                // 没有 heading() 时 TalkBack 只能逐字念，滑到「个人页」三个字
+                // 也不知道自己到了哪个页面（UI/UX 方案 §3.5）。
+                .semantics { heading() },
         )
     }
 }

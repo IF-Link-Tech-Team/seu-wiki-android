@@ -52,6 +52,7 @@ import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.feed.FeedScope
 import tech.iflink.seuwiki.ui.rows.FeedRow
 import tech.iflink.seuwiki.ui.rows.DocRow
+import androidx.compose.ui.platform.LocalDensity
 
 /**
  * 主页.
@@ -126,6 +127,20 @@ fun HomeScreen(
  */
 @Composable
 private fun BentoRow(profile: UserProfileStore) {
+    // 大字号下并排会把「今天没课了」「去工具页查看完整课表」挤成两行细字，
+    // 而这两张卡是主页信息量最大的入口。竖排后每张卡拿回整行宽度。
+    // 阈值取 1.5×：再大就明显该换行了（UI/UX 方案 §6「大字号下两张卡改为竖排」）。
+    val stacked = LocalDensity.current.fontScale >= 1.5f
+    if (stacked) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ReminderCard(reminder = profile.nextReminder, modifier = Modifier.fillMaxWidth())
+            NextCourseCard(course = profile.nextCourse, modifier = Modifier.fillMaxWidth())
+        }
+        return
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()

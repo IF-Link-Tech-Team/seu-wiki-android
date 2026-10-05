@@ -49,6 +49,8 @@ import kotlinx.coroutines.launch
 import androidx.compose.animation.core.Animatable
 import androidx.compose.runtime.remember
 import kotlin.math.roundToInt
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 
 /**
  * The iOS `cardStyle()` modifier: a raised card on the grouped background.
@@ -189,6 +191,9 @@ fun SectionHeader(
             text = title,
             style = SeuType.Title3,
             color = colors.label,
+            // 分节标题也是标题。只标在**标题那一个 Text** 上，不标整个 Row ——
+            // 否则同一行右侧的「查看全部」也会被读成标题的一部分。
+            modifier = Modifier.semantics { heading() },
         )
         Spacer(Modifier.weight(1f))
         if (actionLabel != null && onAction != null) {
