@@ -22,8 +22,20 @@ data class AuthConfig(
     val redirectUri: String = "$REDIRECT_SCHEME://callback",
     val callbackScheme: String = REDIRECT_SCHEME,
     /**
-     * 必须请求的 scope：与 Cookie 客户端一致（否则 UserInfo 缺 email / roles 声明，
-     * 社区角色映射静默降级）；`offline_access` 换取 refresh token。
+     * 请求的 scope。
+     *
+     * - `openid` / `profile` / `email`：UserInfo 里拿到 sub、昵称、邮箱，这些**已经在用**。
+     * - `offline_access`：换 refresh token。**必须同时带 `prompt=consent`**，否则 Logto
+     *   按 OIDC Core §6 忽略它、不签发 refresh token，详见 `AuthStore.offlineAccessGranted`。
+     * - `roles`：**目前只是先要着，代码里一处都没用**。Logto 的 UserInfo 确实会返回
+     *   （实测 `["community_super_admin"]`），但两端的 UserInfo 解析都没有这个字段、
+     *   Session 里也不存，全工程没有任何按角色分支的逻辑 —— 早期那句「否则社区角色映射
+     *   静默降级」是在描述一个不存在的功能，已删除。
+     *
+     * 保留在 scope 里是因为它不影响 token 形态、也不带来任何副作用，等到真要做社区/论坛的
+     * 角色化功能（比如按版主身份显示管理入口）时就不用重新走一遍授权。**但那时要动的不只是
+     * 这里**：得把 `roles` 加进 `AuthStore` 的 UserInfo 解析、`Session` 字段与持久化，
+     * 否则请求了也是白请求。
      */
     val scopes: List<String> = listOf("openid", "profile", "email", "roles", "offline_access"),
     /**
