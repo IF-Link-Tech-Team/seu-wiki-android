@@ -1,5 +1,6 @@
 package tech.iflink.seuwiki
 
+import tech.iflink.seuwiki.R
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import org.junit.Assert.assertEquals
@@ -11,10 +12,13 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.RuntimeEnvironment
 import tech.iflink.seuwiki.data.campusHtmlToAnnotatedString
 import tech.iflink.seuwiki.data.parseIso8601
+import tech.iflink.seuwiki.models.UserFacingError
 import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.Routes
+import tech.iflink.seuwiki.ui.search.SearchScope
 
 /**
  * 关键纯逻辑断言套件 —— 与 iOS 端 `SelfCheck.swift` **逐条对齐**。
@@ -36,6 +40,9 @@ class SelfCheckTest {
 
     /** 品牌深绿，仅用于让 HTML 解析器有确定的强调色，不参与断言。 */
     private val BRAND = Color(0xFF0E5A46)
+
+    /** `Format` 的时间文案已搬进 `strings.xml`，取资源需要 Context。 */
+    private val context = RuntimeEnvironment.getApplication()
 
 
     // MARK: - 日期解析
@@ -70,27 +77,27 @@ class SelfCheckTest {
     @Test
     fun `相对时间 一分钟内显示刚刚`() {
         val now = 1_767_254_399_000L
-        assertEquals("刚刚", Format.relative(now - 30_000, now))
+        assertEquals("刚刚", Format.relative(context, now - 30_000, now))
     }
 
     @Test
     fun `相对时间 一分钟以上显示分钟数`() {
         val now = 1_767_254_399_000L
-        assertEquals("1 分钟前", Format.relative(now - 60_000, now))
+        assertEquals("1 分钟前", Format.relative(context, now - 60_000, now))
     }
 
     @Test
     fun `相对时间 N 天前`() {
         val now = 1_767_254_399_000L
         val day = 24L * 60 * 60 * 1000
-        assertEquals("3 天前", Format.relative(now - 3 * day, now))
+        assertEquals("3 天前", Format.relative(context, now - 3 * day, now))
     }
 
     @Test
     fun `相对时间 超过 7 天用绝对日期`() {
         val now = 1_767_254_399_000L
         val day = 24L * 60 * 60 * 1000
-        val out = Format.relative(now - 30 * day, now)
+        val out = Format.relative(context, now - 30 * day, now)
         assertFalse("超过 7 天不该再显示「N 天前」，实际 $out", out.contains("天前"))
     }
 
@@ -98,7 +105,7 @@ class SelfCheckTest {
     fun `相对时间 未来时间不显示天前`() {
         val now = 1_767_254_399_000L
         val day = 24L * 60 * 60 * 1000
-        val out = Format.relative(now + 3 * day, now)
+        val out = Format.relative(context, now + 3 * day, now)
         assertFalse("未来时间不该显示「天前」，实际 $out", out.contains("天前"))
     }
 
@@ -210,5 +217,49 @@ class SelfCheckTest {
         val now = 1_767_254_399_000L
         assertTrue("过去的时间不该排", now - 3_600_000 < now)
         assertTrue("未来的时间该排", now + 3_600_000 > now)
+    }
+
+    // MARK: - 搜索信源路由键
+
+    @Test
+    fun `搜索信源 key 往返 不依赖显示文案`() {
+        // 路由 search/list/{scope}/{keyword} 走的是 key，不是中文标签。
+        // 一旦这里改成用显示名当键，用户中途改设备语言后回退栈里那条路由
+        // 就再也匹配不上，页面会掉进「未知搜索范围」。
+        SearchScope.entries.forEach { scope ->
+            assertEquals("key 往返失败：${scope.name}", scope, SearchScope.fromKey(scope.key))
+        }
+    }
+
+    @Test
+    fun `搜索信源 key 是稳定 ASCII 不含中文`() {
+        SearchScope.entries.forEach { scope ->
+            assertTrue(
+                "路由键不能含中文，实际 \"${scope.key}\"",
+                scope.key.all { it.isLetterOrDigit() && it.code < 128 },
+            )
+        }
+        assertNull("未知 key 必须解析为 null 而不是随便兜一个", SearchScope.fromKey("通知"))
+    }
+
+    // MARK: - 用户可见错误的本地化前缀
+
+    @Test
+    fun `服务端 error_description 永远带本地化前缀`() {
+        // Logto / 攻击者都能往回调 URL 里塞任意 error_description。
+        // 原样显示等于用 App 自己的口吻替对方说话（钓鱼）。
+        val hostile = "您的账户已被冻结，请立即联系客服并提供银行卡号"
+        val shown = UserFacingError(R.string.profile_login_failed, hostile).format(context)
+        assertTrue(
+            "必须以 App 自己的前缀开头，实际 \"$shown\"",
+            shown.startsWith("登录失败："),
+        )
+        assertTrue("细节仍应保留给用户看", shown.contains(hostile))
+    }
+
+    @Test
+    fun `无细节的错误不吞掉百分号格式符`() {
+        val plain = UserFacingError(R.string.profile_login_unconfigured).format(context)
+        assertEquals("登录服务配置中", plain)
     }
 }

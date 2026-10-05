@@ -52,6 +52,15 @@ android {
         }
     }
 
+    // 自检套件（SelfCheckTest）现在要断言 strings.xml 里的时间文案，
+    // 必须让 Robolectric 能读到合并后的资源表；不开这个开关它拿到的
+    // 是空的 Resource 对象，getString 直接抛 NotFoundException。
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
     buildTypes {
         debug {
             isMinifyEnabled = false
