@@ -94,8 +94,12 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
+    // Kotlin 2.4 起 `kotlinOptions.jvmTarget = "17"` 这种字符串写法被移除，
+    // 必须走 compilerOptions DSL。与上面的 compileOptions 保持同为 17。
+    kotlin {
+        compilerOptions {
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+        }
     }
 
     buildFeatures {
