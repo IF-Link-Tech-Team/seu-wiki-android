@@ -26,6 +26,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -37,6 +39,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -49,13 +53,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.RemoteFeedDetail
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.data.campusHtmlToAnnotatedString
+import tech.iflink.seuwiki.ui.openExternalUrl
 import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
@@ -144,7 +150,16 @@ fun FeedItemDetailScreen(
     }
 
     val colors = SeuTheme.colors
-    val uriHandler = LocalUriHandler.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
+    // 正文与「查看原文」都走同一个不崩的打开器：Custom Tabs 优先，
+    // 设备上实在没有浏览器时给一句话提示，而不是把 App 带走。
+    val openExternal: (String) -> Unit = { url ->
+        if (!context.openExternalUrl(url, colors.groupedBackground.toArgb())) {
+            scope.launch { snackbarHostState.showSnackbar("这台设备上没有可打开链接的浏览器") }
+        }
+    }
     var showsReminderEditor by rememberSaveable { mutableStateOf(false) }
     // 列表响应不含 links.original，原文链接优先取详情接口下发的。
     val originalUrl = detail?.originalUrl ?: item?.originalUrl
@@ -222,10 +237,15 @@ fun FeedItemDetailScreen(
 
             ActionBar(
                 canOpenWeb = originalUrl != null,
-                onOpenWeb = { originalUrl?.let(uriHandler::openUri) },
+                onOpenWeb = { originalUrl?.let(openExternal) },
                 onSetReminder = { showsReminderEditor = true },
             )
         }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
     }
 
     if (showsReminderEditor) {

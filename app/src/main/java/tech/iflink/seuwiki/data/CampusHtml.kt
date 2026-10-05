@@ -37,14 +37,21 @@ data class CampusHtml(
  *
  * 不会抛异常：畸形标记降级为纯文本，和 SwiftUI 侧 `try? NSAttributedString(...)`
  * 的静默回退一致。[accentColor] 用于链接着色。
+ *
+ * [baseUrl] 用于把正文里的**相对链接**补成绝对地址。手册与经验长文的 `html`
+ * 里既有 `https://` 外链，也有大量 `#dcb876` 这样的页内锚点、以及指向站内其它
+ * 小节的相对路径；这些值直接交给 `LocalUriHandler.openUri` 会抛
+ * `ActivityNotFoundException`（拿整个 App 陪葬）。这里统一在解析阶段就补全，
+ * 调用方拿到的 [AnnotatedString] 里只剩可直接打开的 http(s) 链接。
  */
 fun campusHtmlToAnnotatedString(
     html: String,
     accentColor: Color,
+    baseUrl: String? = null,
 ): CampusHtml {
     val parser = WhitelistHtmlParser()
     parser.parse(html)
-    return parser.build(accentColor)
+    return parser.build(accentColor, baseUrl)
 }
 
 private class WhitelistHtmlParser {
@@ -190,8 +197,11 @@ private class WhitelistHtmlParser {
         val digits = name.substring(if (isHex) 2 else 1)
         val code = if (isHex) digits.toIntOrNull(16) else digits.toIntOrNull(10)
         if (code == null || code !in 1..0x10FFFF) return null
-        // 代理对由 StringBuilder 正确拼成，`Int.toString()` 已经按 UTF-16 输出。
-        return code.toString()
+        // 必须用 Character.toChars 转成真正的字符，之前写的是 `code.toString()`，
+        // 于是 `&#8217;`（右单引号）被输出成字面的 "8217" 四个数字字符。
+        // 超出 Basic Multilingual Plane 的码点会被 toChars 拆成 UTF-16 代理对，
+        // String 由这两个 char 正确还原成 emoji。
+        return String(Character.toChars(code))
     }
 
     private fun appendCharRaw(ch: Char) {
@@ -201,6 +211,10 @@ private class WhitelistHtmlParser {
             return
         }
         if (ch != ' ' && ch != '\t') {
+            // 真正要写内容了，先把上一个块级标签留下的「待输出段落分隔」补上。
+            // 少这一句，`<p>a</p><p>b</p>` 的两个 `</p>` 各自只置了 pendingBreak，
+            // 真正 append 的却是紧跟其后的正文，于是得到 "ab\n\n" —— 段落粘连。
+            flushPendingBreak()
             if (atLineStart && listDepth > 0) {
                 // 列表项补一个项目符号，视觉上接近系统列表。
                 appendRaw("• ")
@@ -239,12 +253,48 @@ private class WhitelistHtmlParser {
     private fun attrOf(body: String, name: String): String? {
         val pattern = Regex("(?i)\\b" + name + "\\s*=\\s*(\"([^\"]*)\"|'([^']*)'|([^\\s>]+))")
         val m = pattern.find(body) ?: return null
-        return m.groupValues.getOrNull(2)
+        val raw = m.groupValues.getOrNull(2)
             ?: m.groupValues.getOrNull(3)
             ?: m.groupValues.getOrNull(4)
+            ?: return null
+        // 属性值同样要做实体解码：`href="a?x=1&amp;y=2"` 的真实目标是 `&`，
+        // 不解码的话点开会带着字面的 `&amp;` 去请求，必然 404。
+        return decodeEntities(raw)
     }
 
-    fun build(accentColor: Color): CampusHtml {
+    /**
+     * 逐个扫描并解码字符串里的实体，替换掉原来的 `decodeEntity` 单点调用 ——
+     * 未知实体按字面量保留，与 [appendChar] 的降级行为一致。
+     */
+    private fun decodeEntities(value: String): String {
+        if (!value.contains('&')) return value
+        val out = StringBuilder(value.length)
+        var i = 0
+        while (i < value.length) {
+            if (value[i] != '&') {
+                out.append(value[i])
+                i++
+                continue
+            }
+            val semi = value.indexOf(';', i)
+            if (semi < 0 || semi - i > 12) {
+                out.append('&')
+                i++
+                continue
+            }
+            val decoded = decodeEntity(value.substring(i + 1, semi))
+            if (decoded != null) {
+                out.append(decoded)
+                i = semi + 1
+            } else {
+                out.append(value, i, semi + 1)
+                i = semi + 1
+            }
+        }
+        return out.toString()
+    }
+
+    fun build(accentColor: Color, baseUrl: String?): CampusHtml {
         flushPendingBreak()
         bold = false
         italic = false
@@ -255,7 +305,7 @@ private class WhitelistHtmlParser {
             segments.forEach { segment ->
                 val raw = segment.text.toString()
                 if (raw.isEmpty()) return@forEach
-                val link = segment.href
+                val link = segment.href?.let { resolveLink(it, baseUrl) }
                 val style = SpanStyle(
                     color = if (link != null) accentColor else Color.Unspecified,
                     fontWeight = if (segment.bold) FontWeight.Bold else null,
@@ -277,5 +327,30 @@ private class WhitelistHtmlParser {
             }
         }
         return CampusHtml(annotated, images)
+    }
+
+    /**
+     * 把正文里的链接补成**可以直接交给 Custom Tabs 打开**的 http(s) 地址。
+     *
+     * 正文里实际会出现三类：
+     * - `#dcb876` —— 页内锚点，补成 `baseUrl#dcb876`，点开仍指回当前文档；
+     * - `/api/site/...` 或相对路径 —— 按 baseUrl 的 origin 补全；
+     * - 已经是 http(s) 的外链 —— 原样保留。
+     *
+     * 补不全的（`mailto:`、`tel:` 这类本应用无处理能力的 scheme）返回 null，
+     * 于是它不再是链接、也不会再让 `openUri` 抛 ActivityNotFoundException。
+     */
+    private fun resolveLink(raw: String, baseUrl: String?): String? {
+        val href = raw.trim()
+        if (href.isEmpty()) return null
+        if (href.startsWith("http://", true) || href.startsWith("https://", true)) return href
+        if (baseUrl.isNullOrBlank()) return null
+        val origin = baseUrl.substringBefore("/api").trimEnd('/')
+        return when {
+            // 页内锚点
+            href.startsWith("#") -> "$baseUrl$href"
+            href.startsWith("/") -> origin + href
+            else -> "$baseUrl/$href"
+        }
     }
 }

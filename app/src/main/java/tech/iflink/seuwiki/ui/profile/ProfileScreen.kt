@@ -244,12 +244,14 @@ private fun LoginRow(auth: AuthStore) {
                         .setSendToExternalDefaultHandlerEnabled(true)
                         .build()
                         .apply {
-                            // 这两个 flag 是「授权完自动关掉 Custom Tab」的关键：
-                            // NO_HISTORY 让浏览器在 App 回到前台后不留在栈顶，
-                            // CLEAR_TOP 保证回到的是既有 MainActivity 而不是新建一个。
-                            // 缺了它们的表现是：回调早就处理完了，登录也成功了，
-                            // 但用户眼前只剩一片 Edge 的黑屏 —— 因为 Custom Tab 还压在上面。
-                            intent.addFlags(Intent.FLAG_ACTIVITY_NO_HISTORY or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+                            // 只用 CLEAR_TOP：它保证回调后回到既有的 MainActivity 而不是新建一个，
+                            // 并把压在我们上面的 Custom Tab 一起弹掉（回到 App 后不再是一片黑屏）。
+                            //
+                            // 这里**不能**再加 FLAG_ACTIVITY_NO_HISTORY：那个 flag 的语义是
+                            // 「本 Activity 一旦不可见就 finish 自己」，而用户切出去看一眼
+                            // 验证码短信、再切回来时登录页已经被销毁，表现为莫名其妙地回到首页。
+                            // 弹 tab 改由 AuthCallbackActivity 显式把 MainActivity 拉回前台完成。
+                            intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
                         }
                         .launchUrl(context, Uri.parse(request.url))
                 }.onFailure {
