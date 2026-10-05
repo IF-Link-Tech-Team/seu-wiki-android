@@ -124,8 +124,11 @@ fun <T> ConsoleBar(
                     animationSpec = tween(250),
                     label = "capsuleFill",
                 )
+                // 选中态文字不能用纯白：深色模式的 accent 是 #34D6AB 亮绿，
+                // 白字压上去对比度只有 1.83:1，基本读不出来（WCAG AA 要求 4.5:1）。
+                // 改用 onAccentInverted —— 深色下是 #00382B，对亮绿 7.08:1。
                 val content by animateColorAsState(
-                    targetValue = if (selected) Color.White else colors.label,
+                    targetValue = if (selected) colors.onAccentInverted else colors.label,
                     animationSpec = tween(250),
                     label = "capsuleLabel",
                 )

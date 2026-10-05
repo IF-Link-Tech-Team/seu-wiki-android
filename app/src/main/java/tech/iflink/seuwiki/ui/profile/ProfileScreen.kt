@@ -54,7 +54,7 @@ import tech.iflink.seuwiki.ui.DetailHeader
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.TabPage
-import tech.iflink.seuwiki.ui.rows.ForumAvatar
+import tech.iflink.seuwiki.ui.rows.InitialsAvatar
 
 /**
  * 「我的画像」可选项, ported from the iOS `PersonaOptions`.
@@ -160,7 +160,7 @@ private fun IdentityCard(profile: UserProfileStore, auth: AuthStore) {
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ForumAvatar(session?.displayName ?: "未登录", size = 56.dp)
+            InitialsAvatar(session?.displayName ?: "未登录", size = 56.dp)
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
