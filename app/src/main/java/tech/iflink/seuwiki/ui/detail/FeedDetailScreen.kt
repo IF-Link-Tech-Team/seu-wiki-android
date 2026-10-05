@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -354,6 +355,9 @@ private fun ActionBar(
                 disabledContentColor = colors.tertiaryLabel,
             ),
             elevation = null,
+            // 窄屏（如 360dp）下每个按钮只有约 158dp，装不下「在网页中打开」6 个字，
+            // Text 会在固定 50dp 高度里折行并被裁掉。收掉默认内边距并强制单行省略。
+            contentPadding = PaddingValues(horizontal = 8.dp),
             modifier = Modifier
                 .weight(1f)
                 .height(50.dp),
@@ -364,12 +368,18 @@ private fun ActionBar(
                 modifier = Modifier.size(17.dp),
             )
             Spacer(Modifier.width(6.dp))
-            Text("在网页中打开", style = SeuType.SubheadlineMedium)
+            Text(
+                text = "在网页中打开",
+                style = SeuType.SubheadlineMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Button(
             onClick = onSetReminder,
             shape = CircleShape,
             colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+            contentPadding = PaddingValues(horizontal = 8.dp),
             modifier = Modifier
                 .weight(1f)
                 .height(50.dp),
@@ -380,7 +390,12 @@ private fun ActionBar(
                 modifier = Modifier.size(17.dp),
             )
             Spacer(Modifier.width(6.dp))
-            Text("设定提醒", style = SeuType.SubheadlineMedium)
+            Text(
+                text = "设定提醒",
+                style = SeuType.SubheadlineMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

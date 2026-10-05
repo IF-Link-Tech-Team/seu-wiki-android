@@ -24,6 +24,26 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!--
+          OIDC 回调落点，对应 iOS Info.plist 的 CFBundleURLTypes。
+          scheme 必须与 AuthConfig.REDIRECT_SCHEME 一致（tech.iflink.seuwiki://callback）。
+          singleTask：浏览器跳回时不新建任务栈，MainActivity 走 onNewIntent。
+        -->
+        <activity
+            android:name=".AuthCallbackActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.SEUWiki">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="tech.iflink.seuwiki"
+                    android:host="callback" />
+            </intent-filter>
+        </activity>
     </application>
 
 </manifest>

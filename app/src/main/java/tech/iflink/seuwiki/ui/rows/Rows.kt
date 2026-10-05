@@ -5,6 +5,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -210,6 +212,7 @@ private fun StatLabel(symbol: String, text: String, tint: Color? = null) {
  * and an optional 精选 star, a two-line headline, a two-line summary, and accent
  * chips for the match reasons.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ForYouCard(
     item: FeedItem,
@@ -271,7 +274,12 @@ fun ForYouCard(
             overflow = TextOverflow.Ellipsis,
         )
         if (item.matchReasons.isNotEmpty()) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            // 命中理由来自接口，条数不固定（MockData 最多 2 条），用 FlowRow 换行而不是
+            // 裁切 —— 这也是全项目其它 chip 行统一的做法。
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
                 item.matchReasons.forEach { reason ->
                     TintPill(reason, colors.accent)
                 }
@@ -575,6 +583,8 @@ fun OfflineBanner(modifier: Modifier = Modifier) {
             text = "暂时无法连接服务器，显示离线示例内容",
             style = SeuType.Caption,
             color = colors.secondaryLabel,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

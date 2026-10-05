@@ -12,11 +12,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.browser.customtabs.CustomTabsIntent
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.Icon
@@ -31,8 +31,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.net.Uri
+import tech.iflink.seuwiki.data.AuthStore
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.CardColumn
 import tech.iflink.seuwiki.design.CardCornerRadius
@@ -47,6 +50,7 @@ import tech.iflink.seuwiki.design.forumCompactCount
 import tech.iflink.seuwiki.models.CampusReminder
 import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.ui.DetailHeader
+import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.rows.ForumAvatar
@@ -96,25 +100,34 @@ private object PersonaOptions {
 @Composable
 fun ProfileScreen(
     profile: UserProfileStore,
+    auth: AuthStore,
     onBack: () -> Unit,
 ) {
     // Which picker row is open; "" closes them all, as `dismiss()` did on iOS.
     var expanded by rememberSaveable { mutableStateOf("") }
 
     TabPage {
-        Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+        // 底部留白交给内层列表的 ListBottomPadding（已含 tab bar + 导航栏 inset），
+        // 根容器再叠一次 navigationBarsPadding 会在三键导航下多出约 48dp 死空间。
+        Column(Modifier.fillMaxSize()) {
             DetailHeader(title = "个人页", onBack = onBack)
             LazyColumn(
                 contentPadding = PaddingValues(
                     start = 16.dp,
                     end = 16.dp,
                     top = 4.dp,
-                    bottom = 24.dp,
+                    // 这一屏是详情页但**保留 tab bar**，底部要按 tab bar + 导航栏 inset 让位；
+                    // 原来的 24.dp 让「关注的话题」等最后一块永远压在 tab bar 下面。
+                    bottom = ListBottomPadding,
                 ),
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
-                item(key = "identity") { IdentityCard(profile) }
-                item(key = "login") { LoginRow() }
+                item(key = "identity") { IdentityCard(profile, auth) }
+                if (auth.isLoggedIn) {
+                    item(key = "logout") { LogoutRow(auth) }
+                } else {
+                    item(key = "login") { LoginRow(auth) }
+                }
                 item(key = "persona") {
                     PersonaSection(
                         profile = profile,
@@ -131,50 +144,102 @@ fun ProfileScreen(
     }
 }
 
-/** The identity header, shown in its un-authenticated form until Logto lands. */
+/**
+ * 身份头：未登录时是提示，已登录时显示 Logto 资料。
+ *
+ * 已登录分支对应 iOS `AccountHeaderSection`（首字头像 + 昵称 + 邮箱 + IF.Link ID），
+ * 未登录分支沿用原措辞。
+ */
 @Composable
-private fun IdentityCard(profile: UserProfileStore) {
+private fun IdentityCard(profile: UserProfileStore, auth: AuthStore) {
     val colors = SeuTheme.colors
+    val session = auth.session
     CardColumn(spacing = 12.dp) {
         Row(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ForumAvatar("未登录", size = 56.dp)
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text("未登录", style = SeuType.Headline, color = colors.label)
+            ForumAvatar(session?.displayName ?: "未登录", size = 56.dp)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
                 Text(
-                    text = "登录 IF.Link 账号，同步收藏、提醒与关注的话题",
+                    text = session?.displayName ?: "未登录",
+                    style = SeuType.Headline,
+                    color = colors.label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = session?.email ?: "登录 IF.Link 账号，同步收藏、提醒与关注的话题",
                     style = SeuType.Footnote,
                     color = colors.secondaryLabel,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+        if (session != null && session.subject.isNotEmpty()) {
+            AboutLine(label = "IF.Link ID", value = session.subject)
+        }
+        auth.lastError?.let { message ->
+            Text(
+                text = message,
+                style = SeuType.Footnote,
+                color = colors.red,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Text(
             text = "${profile.college} · ${profile.degree} · ${profile.grade}",
             style = SeuType.Footnote,
             color = colors.secondaryLabel,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
 
 /**
- * 登录行.
+ * 登录行：打开 Custom Tab 走 Logto 授权码 + PKCE 流程。
  *
- * The iOS flow signs in against self-hosted Logto (auth.iflink.tech); that
- * wiring lands in a later milestone, so this row renders the original wording
- * and the tap deliberately does nothing rather than fake a session.
+ * 对应 iOS `LoginPromptSection` 触发 `LoginView` 的位置。差别在于 iOS 目前还是本地
+ * stub 表单（`auth.login(username, password)` 不发网络请求），这里直接接真实的
+ * auth.iflink.tech：点一下 → 系统浏览器授权 → `AuthCallbackActivity` 接回调 →
+ * 换 token → [AuthStore] 单例的 session 变更驱动本界面重组。
+ *
+ * 客户端 ID 还没在 Logto 控制台注册时（[AuthStore.isConfigured] 为 false），
+ * 这一行**如实禁用并标注**「登录服务配置中」，而不是静默无响应。
  */
 @Composable
-private fun LoginRow() {
+private fun LoginRow(auth: AuthStore) {
+    val context = LocalContext.current
     val colors = SeuTheme.colors
+    val configured = auth.isConfigured
+    val label = when {
+        auth.isBusy -> "正在登录…"
+        configured -> "登录 IF.Link 账号"
+        else -> "登录服务配置中"
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(ContinuousRoundedShape(CardCornerRadius))
-            .background(colors.accent)
-            .clickable {
-                // Inert until the Logto client is wired in.
+            .background(if (configured) colors.accent else colors.tertiaryFill)
+            .clickable(enabled = configured && !auth.isBusy) {
+                val request = auth.buildAuthorizationRequest() ?: return@clickable
+                // PKCE verifier 必须**先**落盘再打开浏览器：回调是另一个进程/Activity。
+                auth.rememberPending(request)
+                runCatching {
+                    CustomTabsIntent.Builder()
+                        .setShowTitle(true)
+                        .build()
+                        .launchUrl(context, Uri.parse(request.url))
+                }.onFailure {
+                    auth.dismissError()
+                }
             }
             .padding(vertical = 15.dp),
         contentAlignment = Alignment.Center,
@@ -186,10 +251,34 @@ private fun LoginRow() {
             Icon(
                 imageVector = Icons.Filled.Link,
                 contentDescription = null,
-                tint = Color.White,
+                tint = if (configured) Color.White else colors.tertiaryLabel,
                 modifier = Modifier.size(19.dp),
             )
-            Text("登录 IF.Link 账号", style = SeuType.Headline, color = Color.White)
+            Text(
+                text = label,
+                style = SeuType.Headline,
+                color = if (configured) Color.White else colors.tertiaryLabel,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/** 已登录时的退出入口，对应 iOS 的 destructive「退出登录」。 */
+@Composable
+private fun LogoutRow(auth: AuthStore) {
+    val colors = SeuTheme.colors
+    CardColumn(spacing = 0.dp) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(ContinuousRoundedShape(CardCornerRadius))
+                .clickable { auth.logout() }
+                .padding(vertical = 15.dp),
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Text("退出登录", style = SeuType.Headline, color = colors.red)
         }
     }
 }

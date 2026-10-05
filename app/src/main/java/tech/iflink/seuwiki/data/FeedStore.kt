@@ -70,7 +70,11 @@ class FeedStore(
      * `SearchStore` 的失败回退一致。
      */
     suspend fun pool(query: String): List<FeedItem> = withContext(Dispatchers.IO) {
-        runCatching { client.pool(query).items }.getOrDefault(emptyList())
+        try {
+            client.pool(query).items
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     /**
@@ -183,7 +187,7 @@ class FeedStore(
 
     // MARK: - Private
 
-    private fun fetch(scope: FeedScope, profile: FeedProfile, cursor: String?): FeedPage =
+    private suspend fun fetch(scope: FeedScope, profile: FeedProfile, cursor: String?): FeedPage =
         when (scope) {
             FeedScope.ForYou -> client.forYou(
                 college = profile.college,

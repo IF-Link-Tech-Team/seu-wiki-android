@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -123,7 +122,7 @@ fun TimetableScreen(
         .sortedBy { it.startMinutes }
 
     TabPage {
-        Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+        Column(Modifier.fillMaxSize()) {
             DetailHeader(
                 title = "课表",
                 onBack = onBack,
@@ -257,8 +256,9 @@ private fun CourseCard(course: Course) {
                 // `Label(_:systemImage:)` used the `person` and `mappin` symbols;
                 // neither has a SeuIcons entry, so the Material equivalents are
                 // referenced directly, as FeedScreen does for its check glyph.
-                MetaLabel(Icons.Outlined.Person, course.teacher)
-                MetaLabel(Icons.Outlined.Place, course.location)
+                // 两个 Label 都要能被压缩，否则教师名长时会把地点挤成 0 宽。
+                MetaLabel(Icons.Outlined.Person, course.teacher, Modifier.weight(1f))
+                MetaLabel(Icons.Outlined.Place, course.location, Modifier.weight(1f))
             }
         }
     }
@@ -266,9 +266,10 @@ private fun CourseCard(course: Course) {
 
 /** The caption `Label` pair under a course name. */
 @Composable
-private fun MetaLabel(icon: ImageVector, text: String) {
+private fun MetaLabel(icon: ImageVector, text: String, modifier: Modifier = Modifier) {
     val colors = SeuTheme.colors
     Row(
+        modifier = modifier,
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(3.dp),
     ) {
@@ -404,7 +405,7 @@ fun GPACalculatorScreen(onBack: () -> Unit) {
     val summary = gpaSummaryOf(courses)
 
     TabPage {
-        Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+        Column(Modifier.fillMaxSize()) {
             DetailHeader(title = "绩点计算", onBack = onBack)
 
             if (courses.isEmpty()) {
@@ -778,7 +779,7 @@ fun ToolPlaceholderScreen(
     val tool = remember(toolId) { MockData.tools.firstOrNull { it.id == toolId } }
 
     TabPage {
-        Column(Modifier.fillMaxSize().navigationBarsPadding()) {
+        Column(Modifier.fillMaxSize()) {
             DetailHeader(title = tool?.name.orEmpty(), onBack = onBack)
             if (tool == null) {
                 EmptyStateView(title = "找不到该工具", description = "请返回工具页重新选择")

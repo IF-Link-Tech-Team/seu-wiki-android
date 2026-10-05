@@ -190,7 +190,7 @@ private fun FollowingFeed(
 private fun TopicsSquare(onOpenTopic: (String) -> Unit) {
     val topics = remember { TopicCatalog.topics }
     LazyVerticalGrid(
-        columns = GridCells.Fixed(2),
+        columns = GridCells.Adaptive(minSize = 160.dp),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = ListBottomPadding),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),

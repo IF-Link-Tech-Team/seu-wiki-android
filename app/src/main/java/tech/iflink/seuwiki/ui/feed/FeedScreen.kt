@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -329,9 +330,11 @@ private fun FeedFilterSheet(
             }
 
             Column(
+                // 固定 420.dp 在矮屏 / 横屏下会把筛选内容顶出视口；改成「最高 420dp、
+                // 空间不够就收缩 + 内部滚动」。
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(420.dp)
+                    .heightIn(max = 420.dp)
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp),
             ) {

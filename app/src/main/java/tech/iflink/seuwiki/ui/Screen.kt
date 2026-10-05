@@ -4,6 +4,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
@@ -181,10 +183,17 @@ fun TabPage(content: @Composable () -> Unit) {
 /**
  * Bottom content padding that clears the floating tab bar.
  *
- * The bar is a 58dp capsule inside an 8dp vertical inset plus the navigation
- * inset, so 96dp keeps the last row fully tappable without a scroll hack.
+ * 之前这里是写死的 96.dp，只在「手势导航 + 约 24dp 导航栏」这一种设备上够用：
+ * 三键导航的导航栏 inset 约 48dp，实际需要 74 + 48 = 122dp，写死的值会让
+ * 最后一个列表项有约 26dp 压在 tab bar 下面点不到。这里改成从真实的
+ * `WindowInsets.navigationBars` 算，随系统导航模式变化自适应。
  */
-val ListBottomPadding: Dp = 96.dp
+val ListBottomPadding: Dp
+    @Composable get() {
+        val navBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+        // TabBarClearance(58 栏体 + 8×2 外边距) + 22dp 富余 + 导航栏 inset。
+        return TabBarClearance + 22.dp + navBottom
+    }
 
 /**
  * Room the floating tab bar claims at the bottom edge, excluding insets.

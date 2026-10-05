@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -42,6 +43,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import tech.iflink.seuwiki.data.AuthStore
+import tech.iflink.seuwiki.data.FeedApiClient
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.SeuIcons
@@ -125,8 +128,13 @@ object Routes {
 fun RootView() {
     val context = LocalContext.current
     val profile = remember { UserProfileStore(context.applicationContext) }
+    // 单例：OIDC 回调由 AuthCallbackActivity 处理，必须和这里看到同一个 session。
+    val auth = remember { AuthStore.get(context.applicationContext) }
     // 资讯侧接 seu.wiki 线上接口；论坛/手册/工具/个人页按 iOS 现状仍是本地数据。
-    val feedStore = remember { FeedStore() }
+    // 登录后自动附带 Bearer 凭证（匿名也能访问，登录不是前置条件）。
+    val feedStore = remember {
+        FeedStore(client = FeedApiClient(tokenProvider = { auth.accessToken() }))
+    }
     val navController = rememberNavController()
 
     val backStack by navController.currentBackStack.collectAsStateWithLifecycle()
@@ -198,7 +206,11 @@ fun RootView() {
 
             // --- pushed screens ---
             composable(Routes.PROFILE) {
-                ProfileScreen(profile = profile, onBack = { navController.popBackStack() })
+                ProfileScreen(
+                    profile = profile,
+                    auth = auth,
+                    onBack = { navController.popBackStack() },
+                )
             }
             composable(Routes.HOME_FEED_LIST) {
                 HomeFeedListScreen(
@@ -341,7 +353,8 @@ private fun FloatingTabBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(TabBarHeight)
+                // min 而非固定高：系统字体放大到 1.5× 时标签放不下，固定高会裁字。
+                .heightIn(min = TabBarHeight)
                 .shadow(8.dp, shape, ambientColor = shadow, spotColor = shadow)
                 .clip(shape)
                 .background(surface)

@@ -17,7 +17,7 @@ import java.time.ZoneOffset
  * `seu.wiki` 只读 API 的客户端（`/api/site` 这一组）。
  *
  * 契约见 seu-wiki-v2 `packages/contracts/src/site.ts`，对应 iOS 端的
- * `FeedAPIClient`。匿名可访问，不需要登录。
+ * `FeedAPIClient`。匿名可访问，登录非必需；已登录时自动附带 Bearer 凭证。
  *
  * 四个接口全是 GET，且 kotlinx-serialization 已在依赖里，所以这里直接用
  * `HttpURLConnection` 手写，不引入 Retrofit / OkHttp —— 少两个依赖，也少一层
@@ -25,6 +25,15 @@ import java.time.ZoneOffset
  */
 class FeedApiClient(
     private val baseUrl: String = "https://seu.wiki",
+    /**
+     * 取当前 access token；返回 null 就匿名请求。
+     *
+     * 这些接口匿名可访问，登录不是前置条件 —— 但带上 `Authorization: Bearer` 后
+     * 后端会按登录身份返回个人化内容（契约见 seu-wiki-forum `docs/auth.md` §2）。
+     * 该头是权威凭证：token 无效只会得到匿名/401，后端**不会**回退 Cookie 会话，
+     * 所以这里传出去的必须是 [AuthStore.accessToken] 续过期的结果。
+     */
+    private val tokenProvider: (suspend () -> String?)? = null,
 ) {
 
     private val json = kotlinx.serialization.json.Json {
@@ -34,7 +43,7 @@ class FeedApiClient(
     }
 
     /** GET /api/site/timeline?channel=all&category=&cursor=&limit= */
-    fun timeline(category: FeedCategory?, cursor: String?, limit: Int = PageSize): FeedPage {
+    suspend fun timeline(category: FeedCategory?, cursor: String?, limit: Int = PageSize): FeedPage {
         val query = buildList {
             add("channel" to "all")
             add("limit" to limit.toString())
@@ -46,7 +55,7 @@ class FeedApiClient(
     }
 
     /** GET /api/site/for-you?college=&degree=&grade=&interests=&cursor=&limit= */
-    fun forYou(
+    suspend fun forYou(
         college: String,
         degree: String,
         grade: String,
@@ -67,7 +76,7 @@ class FeedApiClient(
     }
 
     /** GET /api/site/items/{id} —— 详情，列表响应里没有 body / links.original。 */
-    fun itemDetail(id: String): RemoteFeedDetail {
+    suspend fun itemDetail(id: String): RemoteFeedDetail {
         val dto: ItemDetailResponse = get("/api/site/items/${encode(id)}", emptyList())
         return RemoteFeedDetail(
             originalTitle = dto.originalTitle,
@@ -79,7 +88,7 @@ class FeedApiClient(
     }
 
     /** GET /api/site/pool?q=&page= —— 全站搜索，固定每页 40 条。 */
-    fun pool(query: String, page: Int = 1): PoolPage {
+    suspend fun pool(query: String, page: Int = 1): PoolPage {
         val dto: PoolResponse = get(
             "/api/site/pool",
             listOf("q" to query, "page" to page.toString()),
@@ -94,7 +103,11 @@ class FeedApiClient(
 
     // MARK: - Plumbing
 
-    private inline fun <reified T> get(path: String, query: List<Pair<String, String>>): T {
+    private suspend inline fun <reified T> get(
+        path: String,
+        query: List<Pair<String, String>>,
+    ): T {
+        val token = tokenProvider?.invoke()
         val url = buildString {
             append(baseUrl).append(path)
             if (query.isNotEmpty()) {
@@ -109,6 +122,7 @@ class FeedApiClient(
             // for-you 是 `private, no-store`，因人而异，不该缓存；timeline 带 ETag，
             // 由 HttpURLConnection 的条件请求自行协商 304。
             setRequestProperty("Accept", "application/json")
+            if (token != null) setRequestProperty("Authorization", "Bearer $token")
         }
         try {
             val status = connection.responseCode

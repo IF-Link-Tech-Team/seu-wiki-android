@@ -66,7 +66,7 @@ fun ToolsScreen(
         Column {
             ScreenHeader(title = "工具", onProfileClick = onOpenProfile)
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+                columns = GridCells.Adaptive(minSize = 160.dp),
                 modifier = Modifier.fillMaxWidth(),
                 contentPadding = PaddingValues(
                     start = 16.dp,
