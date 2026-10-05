@@ -294,7 +294,7 @@ private fun ActionBar(
  * a free-form note. Saving appends to `profile.reminders`, which is what drives
  * the Home countdown card.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ReminderEditSheet(
     item: FeedItem,
@@ -359,7 +359,10 @@ private fun ReminderEditSheet(
             )
 
             Text("提前提醒", style = SeuType.Footnote, color = colors.secondaryLabel)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // Wraps rather than scrolls: iOS uses a `Picker`, which always shows
+            // all five segments, and a plain Row clipped the last chip off the
+            // right edge on a 1080px-wide screen.
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 advanceOptions.forEach { (days, label) ->
                     val selected = days == advanceDays
                     Text(
@@ -371,7 +374,7 @@ private fun ReminderEditSheet(
                             .clip(CircleShape)
                             .background(if (selected) colors.accent else colors.tertiaryFill)
                             .clickable { advanceDays = days }
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
                     )
                 }
             }
