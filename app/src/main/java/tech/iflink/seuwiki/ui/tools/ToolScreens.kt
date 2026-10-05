@@ -31,9 +31,12 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.platform.LocalContext
+import tech.iflink.seuwiki.data.GpaPersistence
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -399,8 +402,23 @@ private fun newGpaCourse(): GpaCourse =
 @Composable
 fun GPACalculatorScreen(onBack: () -> Unit) {
     val colors = SeuTheme.colors
-    var courses by rememberSaveable(stateSaver = GpaCourseListSaver) {
-        mutableStateOf(emptyList<GpaCourse>())
+    val context = LocalContext.current
+
+    // 原来只有 rememberSaveable：退到后台被回收、或用户划掉 App，输入的十几个
+    // 课程全没了。iOS 端是持久化的（A-12），两端必须一致 —— 首次从磁盘读，
+    // 之后每次变更都写回。
+    var courses by remember {
+        mutableStateOf(
+            GpaPersistence.read(context).map {
+                GpaCourse(id = it.id, name = it.name, credits = it.credits, score = it.score)
+            }
+        )
+    }
+    LaunchedEffect(courses) {
+        GpaPersistence.write(
+            context,
+            courses.map { GpaPersistence.StoredCourse(it.id, it.name, it.credits, it.score) },
+        )
     }
     val summary = gpaSummaryOf(courses)
 
