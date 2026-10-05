@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -132,6 +134,7 @@ data class FeedFilter(
  * categories, a personalised card stream for 为你精选, and a filterable list for
  * 全部 with the filter button appearing in the header only for that scope.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FeedScreen(
     profile: UserProfileStore,
@@ -227,6 +230,13 @@ fun FeedScreen(
                     )
                 }
             } else {
+                PullToRefreshBox(
+                    // 下拉真的重拉第一页，不是假动画：以前只能退到「全部」再切回来
+                    // 才能刷，资讯流这种高频场景下很难用。
+                    isRefreshing = page.isLoading,
+                    onRefresh = { store.refresh(scope, feedProfile) },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
                 LazyColumn(
                     state = listState,
                     contentPadding = PaddingValues(
@@ -250,6 +260,7 @@ fun FeedScreen(
                     if (page.isLoadingMore) {
                         item(key = "loadingMore") { LoadingView(topPadding = 24.dp) }
                     }
+                }
                 }
                 // 滚到底加载下一页，对应 SwiftUI 的 `.onAppear { if item.id == last { loadMore } }`。
                 // 必须由滚动位置驱动：挂在列表外按 `visible.size` 触发会变成「一有数据就再拉一页」，

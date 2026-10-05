@@ -126,8 +126,10 @@ class DocsStore(
      * 在界面上长得一模一样，用户以为是自己关键词不对。改成：失败 → [error]，
      * 成功但 0 命中 → [items] 为空且 [error] 为 null，由 UI 显示空态。
      */
-    suspend fun loadExperience(selection: ExperienceSelection = experienceSelection) {
+    suspend fun loadExperience(selection: ExperienceSelection = experienceSelection, force: Boolean = false) {
         if (experienceLoading) return
+        // 已加载过就直接复用，除非显式 force（下拉刷新）。
+        if (experience.isNotEmpty() && selection == experienceSelection && !force) return
         experienceLoading = true
         experienceError = null
         experienceSelection = selection

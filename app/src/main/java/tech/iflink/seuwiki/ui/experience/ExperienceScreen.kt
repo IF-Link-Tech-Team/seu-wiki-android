@@ -16,6 +16,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -152,7 +154,7 @@ private fun ExperienceList(
  * 筛选项**一律取服务端 `filters[]` 的真实取值**（实测：场景 7 项、年级 6 项、
  * 学院 4 项），不在客户端另编一套中文分类。
  */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun ExperienceFacets(
     docs: DocsStore,
@@ -162,6 +164,12 @@ private fun ExperienceFacets(
     ExperienceState(docs) {
         val filters = docs.experienceFilters
         val selection = docs.experienceSelection
+        PullToRefreshBox(
+            // 下拉真的重拉经验长文，不是假动画。
+            isRefreshing = docs.experienceLoading,
+            onRefresh = { scope.launch { docs.loadExperience(selection, force = true) } },
+            modifier = Modifier.fillMaxSize(),
+        ) {
         LazyColumn(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = ListBottomPadding),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -229,6 +237,7 @@ private fun ExperienceFacets(
             items(docs.experience, key = { it.slug }) { entry ->
                 DocEntryCard(entry = entry, onClick = { onOpenEntry(entry.slug) })
             }
+        }
         }
     }
 }
