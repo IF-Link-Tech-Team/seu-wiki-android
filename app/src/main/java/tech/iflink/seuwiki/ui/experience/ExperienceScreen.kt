@@ -67,8 +67,8 @@ import tech.iflink.seuwiki.ui.TabPage
  * - 热门：经验长文列表（`GET /api/site/docs/experience`）
  * - 话题：同上的分面筛选，用服务端 `filters[]` 给的真实取值
  * - 东大生存手册：真实文档树（`GET /api/site/docs/survival`）
- * - 关注：诚实的空状态。seu-wiki-forum 目前**没有任何 HTTP API 路由**，
- *   社区功能无法接通，所以这里明确写「即将上线」而不是拿假帖子填坑。
+ * - 关注：诚实的空状态。论坛后端已有完整 HTTP API，但本 App 还没有论坛客户端，
+ *   社区功能接不通，所以这里明确写「即将上线」而不是拿假帖子填坑。
  *
  * console 胶囊与 pager 双向绑定：点胶囊滚动 pager，滑动 pager 跟随胶囊，
  * 与 iOS 的 `ExperienceHomeView` 一致。
@@ -339,8 +339,8 @@ private fun HandbookPartCard(
  * 关注 —— 社区尚未上线，诚实空状态。
  *
  * 原来的实现是从 [tech.iflink.seuwiki.models.MockData] 里筛出「用户关注话题」的
- * 假帖子：作者、点赞数 1893、评论数 342 全是编的。seu-wiki-forum 目前没有任何
- * HTTP API 路由，发帖/点赞/评论/关注都接不通 —— 与其用假数据把功能装点出来，
+ * 假帖子：作者、点赞数 1893、评论数 342 全是编的。论坛后端虽有完整 HTTP API，
+ * 但本 App 尚未接入论坛客户端，发帖/点赞/评论/关注都调不通 —— 与其用假数据把功能装点出来，
  * 不如直接说清楚还没上线。
  */
 @Composable

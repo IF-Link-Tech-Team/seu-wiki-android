@@ -348,8 +348,8 @@ fun RootView(
                     onBack = { navController.popBackStack() },
                 )
             }
-            // 社区详情入口保留路由但只给「即将上线」：seu-wiki-forum 至今没有任何
-            // HTTP API 路由，发帖/点赞/评论/关注都接不通。原来的 ForumPostDetailScreen
+            // 社区详情入口保留路由但只给「即将上线」：论坛后端虽有完整 HTTP API，
+            // 但本 App 尚未接入论坛客户端，发帖/点赞/评论/关注都调不通。原来的 ForumPostDetailScreen
             // 是拿 MockData 里编造的帖子正文与「林晚舟」等虚构用户渲染的，
             // 已从生产路径移除 —— 编造内容不该出现在用户面前。
             composable(

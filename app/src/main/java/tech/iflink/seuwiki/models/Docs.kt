@@ -105,8 +105,9 @@ data class DocFilter(
  * 经验 tab 的四个子页，按 console 胶囊顺序。
  *
  * 取代原先的 `ForumFeedTab`：那个 enum 的「热门 / 关注」两页是靠
- * `MockData.forumPosts` 的假帖子撑着的，而 seu-wiki-forum 至今没有任何
- * HTTP API 路由，社区功能接不通。现在四个子页全部来自真实文档接口。
+ * `MockData.forumPosts` 的假帖子撑着的。论坛后端已有完整 HTTP API（34 个路由）
+ * 并已部署，但本 App 还没有论坛客户端：公网域名与 Logto 应用注册未完成。
+ * 现在四个子页全部来自真实文档接口。
  */
 enum class ExperienceTab(val key: String, @StringRes val labelRes: Int) {
     /** 经验长文列表。 */
