@@ -470,4 +470,119 @@ class SelfCheckTest {
         val plain = UserFacingError(R.string.profile_login_unconfigured).format(context)
         assertEquals("登录服务配置中", plain)
     }
+
+    // MARK: - tab 栏形态（贴底，不许退回悬浮）
+
+    /**
+     * 这组断言守的是一条**已经被静默跳过一次**的决定。
+     *
+     * UI/UX 对齐方案 v2 §5/§6/§8 三处都写了「tab 栏改为贴底」，但真正落地的那次提交
+     * （`12f082c`）只做了显隐与语义，用「这行标着『可讨论』」把外观跳过了，之后再没被
+     * 捡回来，README 也没登记成待办 —— 于是悬浮胶囊又留了很久。
+     *
+     * 选态同理：原来同时有常驻灰底（`tabFill`）和按压波纹两层反馈，属于重复表达。
+     *
+     * 这里是源码级回归锁。它读的是**生产源码本体**并逐条比对具体形态，任何一条被改回去
+     * （重新内缩、重新半透明、重新加常驻底、重新加那 16dp 让位）都会直接挂测试，
+     * 而不是等到有人再截一次图才发现。
+     */
+    private fun rootViewSource(): String {
+        val src = File("src/main/java/tech/iflink/seuwiki/ui/RootView.kt")
+        assertTrue("应当找到 RootView.kt，实际工作目录 ${File("").absolutePath}", src.isFile)
+        return src.readText(Charsets.UTF_8)
+    }
+
+    /** 只取 `BottomTabBar` 函数体，避免注释里提到旧词造成误判。 */
+    private fun bottomTabBarBody(): String {
+        val src = rootViewSource()
+        val start = src.indexOf("private fun BottomTabBar(")
+        assertTrue("应当存在贴底栏 BottomTabBar", start >= 0)
+        val end = src.indexOf("\n@Composable", start)
+        return src.substring(start, if (end < 0) src.length else end)
+    }
+
+    @Test
+    fun `tab 栏贴底 不得重新出现悬浮内缩与外边距`() {
+        val body = bottomTabBarBody()
+        // 悬浮时栏体外套着 `padding(horizontal = 16.dp, vertical = 8.dp)`，
+        // 贴底后必须通宽直达屏幕两缘。
+        assertFalse(
+            "栏体不得再横向内缩（16.dp 是悬浮胶囊的边距）",
+            body.contains("horizontal = 16.dp"),
+        )
+        assertFalse(
+            "栏体不得再留上下外边距（8.dp 是悬浮胶囊的离屏间距）",
+            body.contains("vertical = 8.dp"),
+        )
+        // 悬浮靠自绘描边光晕撑轮廓，贴底不需要投影。
+        assertFalse(
+            "贴底后不应再有自绘投影光晕 drawEdgeHalo",
+            rootViewSource().contains("drawEdgeHalo"),
+        )
+    }
+
+    @Test
+    fun `tab 栏底色不透明 不得退回 95% 半透明`() {
+        // 0xF2（95%）是悬浮玻璃时代的值。贴底后列表正文会隔着栏体读出来，
+        // 模拟器实测能直接看清「工程采用周志华…」穿在栏里。
+        val body = bottomTabBarBody()
+        assertFalse(
+            "栏体底色不得再是半透明 0xF2…",
+            Regex("""0xF2[0-9A-Fa-f]{6}""").containsMatchIn(body),
+        )
+        assertTrue(
+            "应当改用不透明底 secondaryGroupedBackground",
+            body.contains("secondaryGroupedBackground"),
+        )
+    }
+
+    @Test
+    fun `tab 栏材质要铺到屏幕底边`() {
+        // 少了这个 Spacer，手势导航条后面会露出 groupedBackground 形成一道色带。
+        assertTrue(
+            "栏体末尾必须补 navigationBars 高度的 Spacer",
+            bottomTabBarBody().contains("windowInsetsBottomHeight"),
+        )
+    }
+
+    @Test
+    fun `tab 选中态只留一次性按压反馈`() {
+        val src = rootViewSource()
+        // 常驻灰底胶囊：`fill` + `tabFill` + 配套的 `tabInset` 宽度动画。
+        assertFalse(
+            "选中项不得再挂常驻底色（tabFill）",
+            src.contains("tabFill"),
+        )
+        assertFalse(
+            "选中项不得再有胶囊宽度动画（tabInset）",
+            src.contains("tabInset"),
+        )
+        // 一次性反馈必须还在：没有它就回到 §3.3 点名的 `indication = null`。
+        assertTrue(
+            "按压波纹必须保留（selectable 的默认 indication）",
+            src.contains("role = Role.Tab"),
+        )
+    }
+
+    @Test
+    fun `子页面仍隐藏 tab 栏 且贴底后不再多留 16dp 让位`() {
+        val screen = File("src/main/java/tech/iflink/seuwiki/ui/Screen.kt")
+        assertTrue("应当找到 Screen.kt", screen.isFile)
+        val src = screen.readText(Charsets.UTF_8)
+        // 显隐规则：判据是栈顶 destination。
+        assertTrue(
+            "子页面隐藏 tab 栏的判据不能丢",
+            src.contains("LocalTabBarVisible"),
+        )
+        // 贴底后没有 8×2 外边距了，TabBarClearance 只能等于栏体本身。
+        assertTrue(
+            "TabBarClearance 应当就是 tabBarHeight 本身",
+            Regex("""if \(LocalTabBarVisible\.current\) tabBarHeight else 0\.dp""")
+                .containsMatchIn(src),
+        )
+        assertFalse(
+            "TabBarClearance 不应再叠加悬浮外边距的 16.dp",
+            Regex("""tabBarHeight \+ 16\.dp""").containsMatchIn(src),
+        )
+    }
 }

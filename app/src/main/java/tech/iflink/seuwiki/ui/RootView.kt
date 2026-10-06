@@ -4,7 +4,6 @@ import androidx.annotation.StringRes
 import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -23,12 +22,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -37,18 +33,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.graphics.Outline
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -66,7 +55,6 @@ import androidx.navigation.navArgument
 import tech.iflink.seuwiki.data.AuthStore
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
-import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
@@ -181,12 +169,11 @@ object Routes {
  * App shell.
  *
  * The SwiftUI root is a `TabView`; here a `NavHost` plays that role so each tab
- * keeps its own back stack, and the tab bar sits on top as a floating capsule.
+ * keeps its own back stack, and [BottomTabBar] sits on top of it.
  *
- * Like `TabView`, the bar stays on screen for screens pushed *inside* a tab — a
- * feed detail, a topic, the timetable — and the active item follows whichever
- * tab's stack you are on rather than disappearing, so `switchTab` still works
- * from a detail page.
+ * **显隐规则与 iOS 相反，这是有意的机制层差异**（UI/UX 对齐方案 v2 §3.1）：
+ * 安卓有系统返回链路，子页面里切 tab 的需求很弱，所以 bar 只在 5 个一级页面出现；
+ * iOS 没有这一层返回链路，bar 常驻。见 [showTabBar] 的判据与 [BottomTabBar] 的说明。
  */
 @Composable
 fun RootView(
@@ -430,7 +417,7 @@ fun RootView(
             enter = slideInVertically(animationSpec = tween(200)) { it } + fadeIn(tween(200)),
             exit = slideOutVertically(animationSpec = tween(200)) { it } + fadeOut(tween(200)),
         ) {
-            FloatingTabBar(
+            BottomTabBar(
                 selected = owningTab,
                 onSelect = { navController.switchTab(it) },
             )
@@ -451,76 +438,63 @@ private fun NavHostController.switchTab(tab: AppTab) {
 }
 
 /**
- * 沿 [shape] 自身曲线向外描若干圈淡墨，形成一圈柔和的边缘光晕 —— 充当悬浮 tab 栏的
- * 投影。**必须在 clip 之前调用**（光晕要画到 shape 之外）。
+ * 贴底的 tab 栏。
  *
- * 为什么不直接用 `Modifier.shadow(elevation, shape)`：elevation 阴影是「形状 ⊕ 模糊」，
- * 模糊量相对圆角半径越大，阴影外轮廓的等效圆角就越"方"，和外框那条弧对不齐。
- * 而这里描的是**同一条路径**，只是向外偏移，所以内外弧在构造上严格同心；
- * 清晰度也完全由下面这几圈的线宽与 alpha 控制，不受设备 blur 实现差异影响。
+ * **为什么安卓贴底、iOS 常驻**（UI/UX 对齐方案 v2 §2 / §3.1）：
+ * 两端栏体形态不同不是视觉偏好，而是**平台机制不同**的直接结果。
  *
- * 多圈叠加而非单圈：单圈描边边缘会有一条硬边，叠加几圈低 alpha 才是渐变，
- * 靠近轮廓处 alpha 累加、向外迅速衰减。
+ * - **安卓**：有系统返回手势/返回键，「退回一级页面」几乎零成本，子页面里切 tab 的
+ *   需求很弱，所以子页面可以放心把栏体撤掉（[LocalTabBarVisible]），底部空间让给
+ *   页面自身的操作。栏体既然只在一级页面出现，悬浮遮挡内容就换不回任何东西 ——
+ *   国产 Android 的底栏一律通宽贴底，本栏跟着这个惯例。
+ * - **iOS**：没有这一层返回链路，详情页里直接切 tab 是正常动线，Apple 也要求 tab 栏
+ *   常驻。那边用系统 `TabView`（见 `RootTabView.swift`），栏体由系统绘制，形态不由
+ *   我们的代码决定，所以 iOS 侧不需要、也不该在这里对齐安卓的手绘细节。
  *
- * 为什么要自己扛这个边界：iOS 系统 tab 栏靠材质里的真实背景模糊撑起轮廓，而本工程的
- * surface 只是 `0xF2FFFFFF` 的扁平近白色、没有 blur。去掉描边后栏体两侧一旦压到白色
- * 卡片上就没有任何东西定义边界（栏体本身也是白的）。所以光晕不能省。
+ * 收敛的是**观感**（通宽、贴底、顶部一条发丝线），分开的是**显隐规则** ——
+ * 后者属于机制层的有意差异，方案 §3.1 明确允许两端不一致。
  *
- * @param rings 由内到外的 (线宽 dp, alpha) 列表。
+ * 选中态只有**品牌绿**加**一次性按压波纹**（[Modifier.selectable] 的默认 indication）。
+ * 刻意不再保留常驻灰底：常驻底色和「按到了没有」是两件事，同时挂着既冗余，
+ * 又会在通宽底栏上多出一块长期不消失的视觉噪声。
  */
-private fun DrawScope.drawEdgeHalo(
-    shape: Shape,
-    color: Color,
-    rings: List<Pair<Dp, Float>> = listOf(1.2.dp to 0.045f, 3.dp to 0.05f, 5.5.dp to 0.055f),
-) {
-    val path = when (val outline = shape.createOutline(size, layoutDirection, this)) {
-        is Outline.Generic -> outline.path
-        is Outline.Rounded -> Path().apply { addRoundRect(outline.roundRect) }
-        is Outline.Rectangle -> Path().apply { addRect(outline.rect) }
-    }
-    rings.forEach { (width, alpha) ->
-        drawPath(
-            path = path,
-            color = color.copy(alpha = alpha),
-            style = Stroke(width = width.toPx()),
-        )
-    }
-}
-
 @Composable
-private fun FloatingTabBar(
+private fun BottomTabBar(
     selected: AppTab,
     onSelect: (AppTab) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val colors = SeuTheme.colors
-    // Translucent so content scrolling underneath reads as "behind glass",
-    // matching the iOS tab bar's material treatment.
-    val surface = if (colors.isDark) Color(0xF21C1C1E) else Color(0xF2FFFFFF)
-    // 浅色阴影的 alpha 看着定：0x1F(12%) 在**白卡片**上几乎读不出来，栏体两端就会
-    // 直接和内容融在一起（这是去掉描边后必须自己扛起边界的唯一手段）。
-    val shadow = if (colors.isDark) Color(0x40000000) else Color(0x333C3C43)
-    // 顶部发丝线，对应 iOS **系统** tab bar 的真实构造（材质 + 顶部一条 hairline，见
-    // iOS RootTabView 用的是系统 TabView，不是手搓胶囊）。
+    // **不透明**底。悬浮时这里曾是 0xF2（95%）的半透明，为的是让内容从玻璃下透出来。
+    // 贴底之后那个前提不成立了：实测列表正文会隔着栏体读出来（「工程采用周志华…」）
+    // 一清二楚，看着像渲染错位而不是玻璃。方案 §5 写的就是「白色或深色底」。
+    // secondaryGroupedBackground 正是卡片那层底色（浅色纯白 / 深色 #1C1C1E），
+    // 与 iOS 的 secondarySystemGroupedBackground 同一个角色。
+    val surface = colors.secondaryGroupedBackground
+    // 顶部发丝线，对应 iOS **系统** tab bar 的真实构造（材质 + 顶部一条 hairline）。
     //
-    // 原来这里是一圈完整的 1dp 描边，但胶囊圆角有 29dp（栏高的一半），描边弧与阴影的
-    // 膨胀弧在这么大的半径上必然不共心，两端会看到"双重弧线"。只留顶部一条，
-    // 既对上 iOS，也去掉了打架的那条轮廓。
+    // 原来这行还兼着"给胶囊描边"的作用：悬浮时两侧压在白卡片上没有任何东西定义
+    // 边界（栏体本身也是白的），靠自绘光晕 + 描边撑轮廓。贴底之后栏体通宽、顶边
+    // 就是分界，一条发丝线足够，也不再需要投影和描边。
     val hairline = if (colors.isDark) Color(0x1FFFFFFF) else Color(0x14000000)
     val hairlineWidth = 1.dp
     // 栏体高度先取出来：drawBehind 的 lambda 不是 composable，取不到 tabBarHeight。
     val barHeight = tabBarHeight
-    // 胶囊的圆角 = 半径，所以跟着栏体高度走（大字体下栏体长高，圆角也要跟着圆）。
-    val radius = barHeight / 2
-    // C：改用超椭圆，与全站卡片（cardStyle 一律 ContinuousRoundedShape）以及 iOS 的
-    // RoundedRectangleStyle.continuous 是同一套曲线语言，不再是工程里唯一的圆弧孤岛。
-    val shape = ContinuousRoundedShape(radius)
 
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .windowInsetsPadding(WindowInsets.navigationBars)
-            .padding(horizontal = 16.dp, vertical = 8.dp),
+            .background(surface)
+            // 发丝线通宽画在栏体最上沿，缩进半个线宽避免被抗锯齿边缘吃掉半条。
+            .drawBehind {
+                val y = hairlineWidth.toPx() / 2f
+                drawLine(
+                    color = hairline,
+                    start = Offset(0f, y),
+                    end = Offset(size.width, y),
+                    strokeWidth = hairlineWidth.toPx(),
+                )
+            },
     ) {
         Row(
             modifier = Modifier
@@ -529,32 +503,6 @@ private fun FloatingTabBar(
                 // 会裁掉标签。上下都要有界 —— TabItem 用了 fillMaxHeight()，父容器若只给
                 // min 而不给 max，测量会拿到无界高度约束，整棵布局会塌掉。
                 .height(barHeight)
-                // 刻意**不用** Modifier.shadow(elevation, shape)。elevation 阴影是
-                // 「形状 ⊕ 模糊」：模糊量相对圆角半径一大，阴影外轮廓的等效圆角就跟着
-                // 变"方"，和外框那条弧对不上 —— 这正是最初"弧度差异很奇怪"的来源
-                // （29dp 半径配 8dp 模糊，22px 对 80px，27%）。
-                //
-                // 改用下面 drawBehind 里那条「同源描边光晕」：它就是把同一条曲线向外
-                // 描若干圈，构造上与栏体边缘严格同心，不可能错位，而且清晰度可控。
-                //
-                // 必须在 clip **之前**：光晕要画到 shape 之外，clip 之后就只能被裁掉了。
-                .drawBehind { drawEdgeHalo(shape, shadow) }
-                .clip(shape)
-                .background(surface)
-                // 顶部发丝线只画在两段圆角之间的直边上，缩进半个线宽，避免被 clip 的
-                // 抗锯齿边缘吃掉半条线。
-                .drawBehind {
-                    val inset = hairlineWidth.toPx() / 2f
-                    val insetX = radius.toPx()
-                    drawLine(
-                        color = hairline,
-                        start = Offset(insetX, inset),
-                        end = Offset(size.width - insetX, inset),
-                        strokeWidth = hairlineWidth.toPx(),
-                    )
-                }
-                .clip(shape)
-                .background(surface)
                 // 让读屏把这 5 个 item 当成一组 tab 播报（"主页，标签，5 个中的第 1 个"），
                 // 否则 TalkBack 会把它们当成 5 个互不相干的按钮。
                 .selectableGroup(),
@@ -570,19 +518,28 @@ private fun FloatingTabBar(
                         .weight(1f)
                         .fillMaxHeight(),
                 )
-            }        }
+            }
+        }
+        // 导航栏 inset 那一截也铺在同一个 surface 里，材质一路落到屏幕底边。
+        // 不补这个 Spacer 的话，手势导航条后面会直接露出根 Box 的 groupedBackground，
+        // 栏体下方形成一道色带。
+        Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
     }
 }
 
 /**
  * One tab.
  *
- * The SwiftUI root never draws this itself — it hands the labels to the system
- * `TabView`, and iOS 26 renders a glass capsule with a full-height rounded fill
- * behind the active item, covering icon *and* caption. Measured off the
- * simulator: the pill is 63pt tall (the whole bar) and ~76pt wide for a
- * two-character label, filled with a neutral 15% black rather than a tinted
- * accent, and inactive items stay in the primary label colour instead of grey.
+ * 选中态只由两样东西表达：**品牌绿**（图标与文字一起变，报告 §5）与**一次性按压波纹**。
+ *
+ * 原来这里还有一个常驻的灰底胶囊（`fill` 0x26000000 / 0x24FFFFFF）加一圈宽度动画
+ * （`inset` 16dp ↔ 9dp），照的是 iOS 26 玻璃 tab 栏的滑胶囊。两层反馈叠在一起是冗余的：
+ * 一次性的按压动画负责"我按到了"，常驻底色负责"我在哪"，而"我在哪"已经由品牌绿说完了，
+ * 灰底在通宽底栏上还多出一块长期不消失的灰斑。现在只留一次性的那层。
+ *
+ * 图标不做「线框 / 实心」两态：跨端约定是按 SF Symbol 名称查表（报告 §7 明确保留），
+ * 而 `house` / `newspaper` / `bubble.left.and.text.bubble.right` / `square.grid.2x2` /
+ * `magnifyingglass` 在 [SeuIcons] 里各只有一个字形，选中靠颜色区分。
  */
 @Composable
 private fun TabItem(
@@ -592,26 +549,12 @@ private fun TabItem(
     modifier: Modifier = Modifier,
 ) {
     val colors = SeuTheme.colors
+    // 未选中用主文字色而不是灰的：与 iOS 系统 tab 栏一致，灰底去掉后这层对比
+    // 就全靠明度差撑住，再压暗一档会让五个 item 显得发闷。
     val tint by animateColorAsState(
         targetValue = if (selected) colors.accent else colors.label,
         animationSpec = tween(220),
         label = "tabTint",
-    )
-    val fill by animateColorAsState(
-        targetValue = if (selected) {
-            if (colors.isDark) Color(0x24FFFFFF) else Color(0x26000000)
-        } else {
-            Color.Transparent
-        },
-        animationSpec = tween(220),
-        label = "tabFill",
-    )
-    // The pill widens around the label when selected, which is what sells the
-    // "the glass moves between tabs" read of the iOS bar.
-    val inset by animateDpAsState(
-        targetValue = if (selected) 16.dp else 9.dp,
-        animationSpec = tween(220),
-        label = "tabInset",
     )
 
     Box(
@@ -619,9 +562,9 @@ private fun TabItem(
         // 「这是一个标签页 / 当前是否选中」的语义，读屏才会播报选中状态；
         // 后者只是无差别的可点击元素。
         //
-        // 指示层**用默认的**（M3 波纹）。原来这里是 `indication = null`，
-        // 按下去一点反馈都没有 —— UI/UX 对齐方案 v2 §3.3 点名的就是这一处。
-        // 滑动中的选中胶囊负责"在哪"，波纹负责"按到了"，两者不冲突。
+        // 指示层**用默认的**（M3 波纹）—— 这是选中之外唯一的动效：按下去亮一圈，
+        // 手抬起来就没了。UI/UX 对齐方案 v2 §3.3 点名的就是原来 `indication = null`
+        // 完全没有反应的那一处。
         modifier = modifier.selectable(
             selected = selected,
             role = Role.Tab,
@@ -629,35 +572,22 @@ private fun TabItem(
         ),
         contentAlignment = Alignment.Center,
     ) {
-        // The pill runs the full height of the bar rather than hugging the two
-        // lines of content — that tall shape is what makes the iOS bar read as
-        // one sliding pill instead of five separate highlights.
-        Box(
-            modifier = Modifier
-                .fillMaxHeight()
-                .padding(vertical = 2.dp)
-                .clip(ContinuousRoundedShape(50.dp))
-                .background(fill)
-                .padding(horizontal = inset),
-            contentAlignment = Alignment.Center,
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Icon(
-                    imageVector = tab.icon,
-                    // 置空：下面紧挨着的 Text 已经带了同样的标签，
-                    // 两处都报读会变成"主页 主页"（UI/UX 方案 §3.5 点名）。
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(24.dp),
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    text = stringResource(tab.labelRes),
-                    style = SeuType.TabLabel,
-                    color = tint,
-                    maxLines = 1,
-                )
-            }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(
+                imageVector = tab.icon,
+                // 置空：下面紧挨着的 Text 已经带了同样的标签，
+                // 两处都报读会变成"主页 主页"（UI/UX 方案 §3.5 点名）。
+                contentDescription = null,
+                tint = tint,
+                modifier = Modifier.size(24.dp),
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = stringResource(tab.labelRes),
+                style = SeuType.TabLabel,
+                color = tint,
+                maxLines = 1,
+            )
         }
     }
 }

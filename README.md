@@ -44,8 +44,7 @@ app/src/main/java/tech/iflink/seuwiki/
 └── ui/                  # 页面：home / feed / experience / tools / search / profile / detail
 ```
 
-- `ui/RootView.kt` 是导航宿主。**子页面隐藏 tab 栏**，按**栈顶** destination 判断
-  （不是「当前属于哪个 tab」—— 详情页上那个判断仍为真，正是 tab 栏从前常驻的成因）。
+- `ui/RootView.kt` 是导航宿主，也是 tab 栏所在（`BottomTabBar`）。
 - `design/SeuIcons.kt` 是 SF Symbol → Material 图标的映射表，**两端共用同一份 SF 名**。
 
 ## 两条别踩的线
@@ -70,6 +69,29 @@ iOS 用 SwiftUI 原生控件，本端用 Material 原生控件 —— 同一个�
 | 提醒列表 | 左滑删除（不是行尾 `×`） |
 
 而**视觉**两端统一：品牌色 `#0E5A46` / 深色强调 `#34D6AB`、卡片、console 胶囊、bento、三信源搜索。
+
+#### tab 栏：贴底 + 子页面隐藏（安卓）/ 常驻（iOS）
+
+**这两端形态不一样是机制差异的结果，不是视觉没对齐。** 记这一条是因为很容易被
+「两端统一视觉」这句话带偏，把安卓的底栏又改回悬浮。
+
+- **安卓贴底、子页面隐藏**：有系统返回键/手势，「退回一级页面」几乎零成本，
+  子页面里切 tab 的需求很弱，所以子页面直接撤掉栏体（`LocalTabBarVisible`），
+  底部让给页面自己的操作。栏体既然只在一级页面出现，悬浮遮挡就换不回任何东西 ——
+  国产 Android 底栏一律通宽贴底。
+- **iOS 常驻**：没有这一层返回链路，详情页里切 tab 是正常动线，Apple 也要求常驻。
+  那边用系统 `TabView`，栏体由系统绘制，形态不由我们的代码决定。
+
+改贴底时一并做了三件配套，缺一件就会出空档或脏边：
+
+1. 栏体末尾补 `Spacer(windowInsetsBottomHeight(navigationBars))`，材质一路落到屏幕底边，
+   否则手势导航条后面会露出 `groupedBackground` 形成色带。
+2. 底色从 95% 半透明改成**不透明**的 `secondaryGroupedBackground` —— 半透明是给
+   悬浮玻璃用的，贴底后列表正文会隔着栏体读出来。
+3. `TabBarClearance` 去掉原来那 16.dp（悬浮胶囊上下各 8.dp 的外边距），贴底后多留就是死白。
+
+选中态**只有品牌绿加一次性按压波纹**，没有常驻灰底 —— 「按到了」和「我在哪」是两件事，
+而「我在哪」品牌绿已经说完了，灰底在通宽底栏上还多出一块长期不消失的灰斑。
 
 ## 自检
 

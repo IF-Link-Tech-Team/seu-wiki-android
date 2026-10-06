@@ -193,7 +193,7 @@ fun TabPage(content: @Composable () -> Unit) {
 }
 
 /**
- * Bottom content padding that clears the floating tab bar **and** the IME.
+ * Bottom content padding that clears the tab bar **and** the IME.
  *
  * 之前这里是写死的 96.dp，只在「手势导航 + 约 24dp 导航栏」这一种设备上够用：
  * 三键导航的导航栏 inset 约 48dp，实际需要 74 + 48 = 122dp，写死的值会让
@@ -213,12 +213,14 @@ val ListBottomPadding: Dp
             // 而且内容明明已经到底了却还显得"还能滚"。
             return maxOf(navBottom + 16.dp, imeBottom + 16.dp)
         }
-        // TabBarClearance(58 栏体 + 8×2 外边距) + 22dp 富余 + 导航栏 inset。
+        // 贴底栏体（[tabBarHeight]）+ 22dp 富余 + 导航栏 inset。
+        // 导航栏那一截已经由 BottomTabBar 末尾的 Spacer 铺进栏体材质里了，
+        // 所以这里的 navBottom 是给内容让位，不是给栏体留空。
         // 键盘弹出时键盘本身就盖住了 tab bar，用 ime 与常规值的较大者即可。
         return maxOf(TabBarClearance + 22.dp + navBottom, imeBottom + 16.dp)
     }
 
-/** 悬浮 tab 栏在正常字体下的栏体高度。 */
+/** 贴底 tab 栏在正常字体下的栏体高度。 */
 val TabBarBaseHeight: Dp = 58.dp
 
 /**
@@ -239,12 +241,14 @@ val tabBarHeight: Dp
     }
 
 /**
- * Room the floating tab bar claims at the bottom edge, excluding insets.
+ * Room the bottom tab bar claims at the bottom edge, excluding insets.
  *
  * Screens that pin something to the bottom — the feed detail's action row — sit
- * *above* the bar rather than under it, the way an iOS pinned bar and the glass
- * tab bar stack; they add this plus `navigationBarsPadding()`. Scrollable content
+ * *above* the bar and add this plus `navigationBarsPadding()`. Scrollable content
  * keeps using [ListBottomPadding] instead, which already includes the inset.
+ *
+ * 栏体改贴底后这里**不再加 16.dp**：那 16 是原来悬浮胶囊上下各 8.dp 外边距，
+ * 悬浮时需要留出"栏体和内容之间的空档"，贴底后栏体紧贴内容，多留一截就是死白。
  *
  * 必须是 composable：栏体高度随系统字体缩放变化，写死会在大字体下少让位。
  *
@@ -252,7 +256,7 @@ val tabBarHeight: Dp
  * 操作条直接贴底，中间不再夹一层空档。
  */
 val TabBarClearance: Dp
-    @Composable get() = if (LocalTabBarVisible.current) tabBarHeight + 16.dp else 0.dp
+    @Composable get() = if (LocalTabBarVisible.current) tabBarHeight else 0.dp
 
 /**
  * 当前是否显示 tab 栏。由 [tech.iflink.seuwiki.ui.RootView] 按 destination 注入。
