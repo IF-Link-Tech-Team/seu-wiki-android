@@ -27,6 +27,13 @@ import tech.iflink.seuwiki.ui.search.SearchScope
 import tech.iflink.seuwiki.ui.profile.SEARCHABLE_OPTION_COUNT
 import tech.iflink.seuwiki.ui.profile.filterOptions
 import java.io.File
+import kotlinx.coroutines.runBlocking
+import tech.iflink.seuwiki.data.ForumApiClient
+import tech.iflink.seuwiki.data.ForumStore
+import tech.iflink.seuwiki.models.ForumAuthor
+import tech.iflink.seuwiki.models.ForumPost
+import tech.iflink.seuwiki.models.ForumSort
+import tech.iflink.seuwiki.models.ForumTargetType
 
 /**
  * 关键纯逻辑断言套件 —— 与 iOS 端 `SelfCheck.swift` **逐条对齐**。
@@ -583,6 +590,402 @@ class SelfCheckTest {
         assertFalse(
             "TabBarClearance 不应再叠加悬浮外边距的 16.dp",
             Regex("""tabBarHeight \+ 16\.dp""").containsMatchIn(src),
+        )
+    }
+
+    // MARK: - 论坛：免登录（Bearer）链路
+
+    /**
+     * 起一个真的本地 HTTP 服务器，捕获请求并回放固定响应。
+     *
+     * 这不是 mock：请求真的走了一遍 socket，`Authorization` 头真的被 HttpURLConnection
+     * 写出去，JSON 真的被 kotlinx.serialization 解析。断言的是**生产代码的行为**，
+     * 不是字符串比对。
+     */
+    private class CapturedRequest(
+        val method: String,
+        val path: String,
+        val query: String?,
+        val authorization: String?,
+        val contentType: String?,
+        val body: String?,
+    )
+
+    /**
+     * 极简 HTTP/1.1 服务器，只够回放固定响应 + 捕获请求。
+     *
+     * 没用 `com.sun.net.httpserver`：那是 JDK 内部模块（`jdk.httpserver`），
+     * Kotlin 解析不到 `com.sun.*`，得改编译参数才能用 —— 为了三条断言去动构建配置
+     * 不划算。`ServerSocket` 是 `java.net` 的一部分，零依赖。
+     */
+    private class LocalApi(private val handler: (CapturedRequest) -> Pair<Int, String>) {
+        private val server = java.net.ServerSocket(0, 0, java.net.InetAddress.getLoopbackAddress())
+        private var thread: Thread? = null
+
+        @Volatile var last: CapturedRequest? = null
+            private set
+
+        val baseUrl: String get() = "http://127.0.0.1:${server.localPort}"
+
+        fun start(): LocalApi {
+            thread = Thread {
+                while (!server.isClosed) {
+                    val socket = runCatching { server.accept() }.getOrNull() ?: break
+                    runCatching { handle(socket) }
+                    runCatching { socket.close() }
+                }
+            }.apply {
+                isDaemon = true
+                start()
+            }
+            return this
+        }
+
+        private fun handle(socket: java.net.Socket) {
+            // 逐字节读到 CRLFCRLF 为止，用 4 字节滑动窗口判断，不引 BufferedReader ——
+            // 一旦套上 reader，它会预读，把正文的头几个字节吞进自己的缓冲区。
+            //
+            // 头按 ISO-8859-1 解（HTTP 头是 ASCII），**正文必须按 UTF-8 解**：客户端
+            // `toByteArray(Charsets.UTF_8)` 写出来的中文，用 ISO-8859-1 解会变成乱码
+            // （之前就因此让断言读到「æ­£ææ」，一度看着像生产端编码错了）。
+            socket.soTimeout = 5_000
+            val raw = socket.getInputStream()
+            val head = java.io.ByteArrayOutputStream()
+            // 移位寄存器：p3/p2/p1 依次是当前字节之前的三个字节。
+            // **不能用 window[i % 4] 这种取模存法** —— 存满一轮后数组是旋转的，
+            // window[0] 变成最新字节而不是最旧，判断永远不成立，read() 会一直阻塞
+            // 把测试挂死（真实踩过）。
+            var p3 = -1; var p2 = -1; var p1 = -1
+            var foundEnd = false
+            while (!foundEnd) {
+                val b = raw.read()
+                if (b < 0) return
+                head.write(b)
+                if (p3 == 13 && p2 == 10 && p1 == 13 && b == 10) foundEnd = true
+                p3 = p2; p2 = p1; p1 = b
+            }
+
+            val headText = head.toString(Charsets.ISO_8859_1)
+            val lines = headText.split("\r\n").filter { it.isNotBlank() }
+            val parts = (lines.firstOrNull() ?: return).split(" ")
+            val method = parts.getOrElse(0) { "GET" }
+            val target = parts.getOrElse(1) { "/" }
+
+            val headers = mutableMapOf<String, String>()
+            lines.drop(1).forEach { line ->
+                val idx = line.indexOf(':')
+                if (idx > 0) {
+                    headers[line.substring(0, idx).trim().lowercase()] = line.substring(idx + 1).trim()
+                }
+            }
+
+            val length = headers["content-length"]?.toIntOrNull() ?: 0
+            val body = if (length > 0) {
+                val buf = ByteArray(length)
+                var read = 0
+                while (read < length) {
+                    val n = raw.read(buf, read, length - read)
+                    if (n < 0) break
+                    read += n
+                }
+                String(buf, 0, read, Charsets.UTF_8)
+            } else {
+                null
+            }
+
+            val qIdx = target.indexOf('?')
+            last = CapturedRequest(
+                method = method,
+                path = if (qIdx >= 0) target.substring(0, qIdx) else target,
+                query = if (qIdx >= 0) target.substring(qIdx + 1) else null,
+                authorization = headers["authorization"],
+                contentType = headers["content-type"],
+                body = body?.ifEmpty { null },
+            )
+
+            val (status, json) = handler(requireNotNull(last))
+            val bytes = json.toByteArray(Charsets.UTF_8)
+            val out = socket.getOutputStream()
+            out.write(
+                ("HTTP/1.1 $status ${if (status == 200) "OK" else "Error"}\r\n" +
+                    "Content-Type: application/json; charset=utf-8\r\n" +
+                    "Content-Length: ${bytes.size}\r\n" +
+                    "Connection: close\r\n\r\n").toByteArray(Charsets.ISO_8859_1)
+            )
+            out.write(bytes)
+            out.flush()
+        }
+
+        fun stop() {
+            runCatching { server.close() }
+            thread?.interrupt()
+        }
+    }
+
+    private fun <T> withLocalApi(
+        handler: (CapturedRequest) -> Pair<Int, String>,
+        block: (LocalApi) -> T,
+    ): T {
+        val api = LocalApi(handler).start()
+        return try {
+            block(api)
+        } finally {
+            api.stop()
+        }
+    }
+
+    @Test
+    fun `论坛请求必须带 App 的 Bearer token`() {
+        // 这是「免登录」的机械保证：App 登一次拿到的 access token 必须原样出现在
+        // 论坛请求头里。后端 src/lib/logto/bearer.ts 见到这个头才走 Bearer 校验；
+        // 少了它，所有写操作会 403 CROSS_ORIGIN_REQUEST（原生客户端没有 Origin/Referer）。
+        withLocalApi({ 200 to """{"posts":[],"next_cursor":null}""" }) { api ->
+            val client = ForumApiClient(
+                baseUrl = api.baseUrl,
+                tokenProvider = { "app-access-token-xyz" },
+            )
+            runBlocking { client.posts() }
+            val req = requireNotNull(api.last) { "应当发出过请求" }
+            assertEquals("GET", req.method)
+            assertEquals("/api/posts", req.path)
+            assertEquals(
+                "Authorization 头必须带 App 的 access token",
+                "Bearer app-access-token-xyz",
+                req.authorization,
+            )
+        }
+    }
+
+    @Test
+    fun `匿名时不发 Authorization 头`() {
+        // 公开只读接口匿名可读，游客不该带一个空头过去。
+        withLocalApi({ 200 to """{"posts":[],"next_cursor":null}""" }) { api ->
+            runBlocking { ForumApiClient(baseUrl = api.baseUrl).posts() }
+            assertNull(
+                "未登录时不应伪造 Authorization 头",
+                requireNotNull(api.last).authorization,
+            )
+        }
+    }
+
+    @Test
+    fun `帖子列表的查询参数与后端契约一致`() {
+        // sort 只能是 latest / top，写错值后端直接 400 INVALID_SORT。
+        assertEquals("latest", ForumSort.Latest.key)
+        assertEquals("top", ForumSort.Top.key)
+        assertEquals(ForumSort.Top, ForumSort.fromKey("top"))
+        assertEquals(ForumSort.Latest, ForumSort.fromKey(null))
+        withLocalApi({ 200 to """{"posts":[],"next_cursor":null}""" }) { api ->
+            runBlocking {
+                ForumApiClient(baseUrl = api.baseUrl).posts(
+                    sort = ForumSort.Top, tag = "baoyan", cursor = "abc", limit = 30,
+                )
+            }
+            val q = requireNotNull(requireNotNull(api.last).query)
+            assertTrue("必须带 sort", q.contains("sort=top"))
+            assertTrue("必须带 tag", q.contains("tag=baoyan"))
+            assertTrue("游标原样回传，不许自己拼", q.contains("cursor=abc"))
+            assertTrue("limit 要夹在服务端上限 50 内", q.contains("limit=30"))
+        }
+    }
+
+    @Test
+    fun `limit 超出服务端上限要被夹住`() {
+        // parsePublicListLimit 拒绝 >50 的值（400 INVALID_LIMIT），客户端先夹住。
+        withLocalApi({ 200 to """{"posts":[],"next_cursor":null}""" }) { api ->
+            runBlocking { ForumApiClient(baseUrl = api.baseUrl).posts(limit = 999) }
+            assertTrue(
+                "limit 应被夹到 50",
+                requireNotNull(api.last).query!!.contains("limit=50"),
+            )
+        }
+    }
+
+    @Test
+    fun `列表响应能解析成真实模型`() {
+        // 用后端 posts/route.ts 的真实响应形状（snake_case + author 子对象 + images/tags）。
+        val json = """
+            {"posts":[{
+              "id":"11111111-1111-4111-8111-111111111111",
+              "title":"宿舍门禁工具与边界",
+              "content":"面向部分东大宿舍门禁的 Android NFC/BLE 客户端案例",
+              "post_type":"normal",
+              "created_at":"2026-09-30T08:00:00.123456Z",
+              "likes_count":12,"comments_count":3,
+              "author":{"id":"22222222-2222-4222-8222-222222222222",
+                        "display_name":"Stella","username":"stella","avatar_url":null},
+              "images":[{"id":"33333333-3333-4333-8333-333333333333",
+                        "asset_url":"/api/media/projects/post-assets/x/y.webp",
+                        "mime_type":"image/webp","sort_order":0}],
+              "tags":[{"id":"44444444-4444-4444-8444-444444444444","name":"保研","slug":"baoyan"}]
+            }],"next_cursor":"bmV4dA"}
+        """.trimIndent()
+        withLocalApi({ 200 to json }) { api ->
+            val page = runBlocking { ForumApiClient(baseUrl = api.baseUrl).posts() }
+            val post = page.posts.single()
+            assertEquals("宿舍门禁工具与边界", post.title)
+            assertEquals(12, post.likesCount)
+            assertEquals(3, post.commentsCount)
+            assertEquals("Stella", post.author?.nameOrFallback)
+            assertEquals("baoyan", post.tags.single().slug)
+            assertEquals(
+                "图片是相对路径，要拼 baseUrl 才能加载",
+                "/api/media/projects/post-assets/x/y.webp",
+                post.images.single().assetUrl,
+            )
+            assertEquals("bmV4dA", page.nextCursor)
+        }
+    }
+
+    @Test
+    fun `作者被软删除时 author 为 null 不能崩`() {
+        // posts.ts:425 是 `?? null` —— 作者被软删除就返回 null，不是省略字段。
+        withLocalApi({ 200 to """{"posts":[{"id":"x","content":"hi","author":null}],"next_cursor":null}""" }) { api ->
+            val post = runBlocking { ForumApiClient(baseUrl = api.baseUrl).posts() }.posts.single()
+            assertNull("author 可能是 null", post.author)
+        }
+    }
+
+    @Test
+    fun `发帖 body 是严格白名单且 Content-Type 正确`() {
+        // 后端 create-input.mjs 多一个 key 就 400 INVALID_BODY；
+        // 非 application/json 直接 415（api/same-origin-json.mjs:26-28）。
+        withLocalApi({ 201 to """{"post":{"id":"abc"}}""" }) { api ->
+            runBlocking {
+                ForumApiClient(baseUrl = api.baseUrl).createPost("标题", "正文", listOf("baoyan"))
+            }
+            val req = requireNotNull(api.last)
+            assertEquals("POST", req.method)
+            assertTrue("必须 application/json", req.contentType!!.startsWith("application/json"))
+            val body = requireNotNull(req.body)
+            val obj = kotlinx.serialization.json.Json.parseToJsonElement(body)
+                .let { it as kotlinx.serialization.json.JsonObject }
+            val keys = obj.keys.toSet()
+            assertEquals(
+                "body 只能是 content/title/tags 这三个 key",
+                setOf("content", "title", "tags"),
+                keys,
+            )
+            assertEquals("正文", obj["content"].toString().trim('"'))
+        }
+    }
+
+    @Test
+    fun `空标题不发 title 字段`() {
+        // 空串会被后端存成 null；客户端干脆不带这个 key，省一次往返。
+        withLocalApi({ 201 to """{"post":{"id":"abc"}}""" }) { api ->
+            runBlocking { ForumApiClient(baseUrl = api.baseUrl).createPost("   ", "正文") }
+            val body = requireNotNull(requireNotNull(api.last).body)
+            assertFalse("空标题不应进 body", body.contains("title"))
+        }
+    }
+
+    @Test
+    fun `删除内容必须带精确的 confirmation 串`() {
+        // content/[targetType]/[targetId]/route.ts:46-48 要求字面量相等，
+        // 少一个字符就 400 INVALID_CONFIRMATION。
+        withLocalApi({ 200 to """{"deleted":true}""" }) { api ->
+            runBlocking {
+                ForumApiClient(baseUrl = api.baseUrl).deleteContent(ForumTargetType.Post, "pid")
+            }
+            val req = requireNotNull(api.last)
+            assertEquals("DELETE", req.method)
+            assertEquals("/api/content/post/pid", req.path)
+            assertTrue(
+                "confirmation 必须是 delete_owned_content",
+                requireNotNull(req.body).contains("delete_owned_content"),
+            )
+        }
+    }
+
+    @Test
+    fun `非 2xx 被解析成带错误码的异常`() {
+        // 后端两种错误体形状：{error} 与 {error, message}，message 可能缺。
+        withLocalApi({ 401 to """{"error":"UNAUTHORIZED"}""" }) { api ->
+            val e = runCatching { runBlocking { ForumApiClient(baseUrl = api.baseUrl).toggleLike("p") } }
+                .exceptionOrNull()
+            val apiErr = e as? ForumApiClient.ForumApiException
+            assertNotNull("401 应抛 ForumApiException，实际 $e", apiErr)
+            assertEquals(401, apiErr!!.status)
+            assertEquals("UNAUTHORIZED", apiErr.errorCode)
+            assertNull("错误体没有 message 字段时应为 null", apiErr.detail)
+            assertTrue("401 必须能被上层识别成「需要登录」", apiErr.isUnauthorized)
+        }
+        withLocalApi({ 403 to """{"error":"CROSS_ORIGIN_REQUEST","message":"请求来源不受信任"}""" }) { api ->
+            val e = runCatching { runBlocking { ForumApiClient(baseUrl = api.baseUrl).createPost(null, "x") } }
+                .exceptionOrNull() as? ForumApiClient.ForumApiException
+            assertEquals(403, e?.status)
+            assertEquals("CROSS_ORIGIN_REQUEST", e?.errorCode)
+            assertEquals("请求来源不受信任", e?.detail)
+            assertFalse("403 不是未登录，别误导用户去登录", e!!.isUnauthorized)
+        }
+    }
+
+    @Test
+    fun `me 在未登录时返回 null 而不是崩`() {
+        // /api/me 永不 401，未登录回 {isAuthenticated:false, viewer:null}。
+        withLocalApi({ 200 to """{"isAuthenticated":false,"viewer":null,"user":null}""" }) { api ->
+            assertNull(runBlocking { ForumApiClient(baseUrl = api.baseUrl).me() })
+        }
+        withLocalApi({
+            200 to """{"isAuthenticated":true,"viewer":{"id":"v1","displayName":"我","forumRole":"member",
+                      "capabilities":["post:create"]},"user":null}"""
+        }) { api ->
+            val viewer = runBlocking { ForumApiClient(baseUrl = api.baseUrl).me() }
+            assertEquals("我", viewer?.nameOrFallback)
+            assertEquals(listOf("post:create"), viewer?.capabilities)
+        }
+    }
+
+    @Test
+    fun `点赞与收藏都是 toggle 不是 setter`() {
+        // 语义搞错会导致连点两次只生效一次。
+        withLocalApi({ 200 to """{"liked":true}""" }) { api ->
+            assertTrue(runBlocking { ForumApiClient(baseUrl = api.baseUrl).toggleLike("p1") })
+            assertEquals("/api/post-likes", requireNotNull(api.last).path)
+            assertTrue("post_id 走 query", requireNotNull(api.last).query!!.contains("post_id=p1"))
+        }
+        withLocalApi({ 200 to """{"bookmarked":false}""" }) { api ->
+            assertFalse(runBlocking { ForumApiClient(baseUrl = api.baseUrl).toggleBookmark("p1") })
+            assertEquals("/api/bookmarks", requireNotNull(api.last).path)
+        }
+    }
+
+    @Test
+    fun `正文摘要过长要截断且全图片帖不显示空摘要`() {
+        val long = ForumPost(
+            id = "x", title = null, content = "字".repeat(300), postType = "normal",
+            createdAt = null, likesCount = 0, commentsCount = 0, author = null,
+        )
+        assertEquals(111, long.excerpt.length)   // 110 + 省略号
+        assertTrue(long.excerpt.endsWith("…"))
+        val blank = long.copy(content = "   \n  ")
+        assertEquals("normal", blank.excerpt)   // 全图片帖退回 postType，不留一条横线
+    }
+
+    @Test
+    fun `作者名要有兜底 不能渲染成空白`() {
+        assertEquals("匿名", ForumAuthor("i", null, null, null).nameOrFallback)
+        assertEquals("@stella", ForumAuthor("i", "  ", "stella", null).nameOrFallback)
+        assertEquals("Stella", ForumAuthor("i", "Stella", "stella", null).nameOrFallback)
+    }
+
+    @Test
+    fun `App 不应再对论坛发第二次登录`() {
+        // 源码级回归锁：论坛客户端只能复用 AuthStore 的 accessToken，
+        // 不允许出现自己的一套 OIDC 流程（再登一次）。
+        val root = File("src/main/java/tech/iflink/seuwiki")
+        val forumClient = File(root, "data/ForumApiClient.kt")
+        assertTrue("应当找到 ForumApiClient.kt", forumClient.isFile)
+        val src = forumClient.readText(Charsets.UTF_8)
+        assertFalse(
+            "论坛客户端不得自己发起 OIDC 授权（那会让用户登两次）",
+            Regex("""authorizationEndpoint|/oidc/auth|buildAuthorizationRequest""").containsMatchIn(src),
+        )
+        // 只能通过 tokenProvider 拿 token
+        assertTrue(
+            "token 必须来自注入的 AuthStore 会话",
+            src.contains("tokenProvider"),
         )
     }
 }

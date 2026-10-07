@@ -46,6 +46,7 @@ import kotlinx.coroutines.launch
 import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.data.ExperienceSelection
+import tech.iflink.seuwiki.data.ForumStore
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.ConsoleBar
 import tech.iflink.seuwiki.design.SeuIcons
@@ -59,6 +60,7 @@ import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
+import tech.iflink.seuwiki.ui.forum.ForumPostList
 
 /**
  * 经验 tab。
@@ -77,9 +79,11 @@ import tech.iflink.seuwiki.ui.TabPage
 fun ExperienceScreen(
     profile: UserProfileStore,
     docs: DocsStore,
+    forumStore: ForumStore,
     onOpenProfile: () -> Unit,
     onOpenEntry: (String) -> Unit,
     onOpenHandbookPart: (String) -> Unit,
+    onOpenPost: (String) -> Unit,
 ) {
     val tabs = ExperienceTab.all
     var tabKey by rememberSaveable { mutableStateOf(ExperienceTab.Hot.key) }
@@ -116,7 +120,13 @@ fun ExperienceScreen(
                     ExperienceTab.Hot -> ExperienceList(docs, onOpenEntry)
                     ExperienceTab.Topics -> ExperienceFacets(docs, onOpenEntry)
                     ExperienceTab.Handbook -> HandbookTree(docs, onOpenHandbookPart, onOpenEntry)
-                    ExperienceTab.Following -> FollowingComingSoon()
+                    // 「关注」分区接真实论坛帖子列表。原来的 FollowingComingSoon()
+                    // 是个占位页：论坛后端还没接。现在直接读 forum.seu.wiki 的公开帖子，
+                    // 匿名也能看 —— 用户不登录也有东西可读，而不是一堵「即将上线」。
+                    ExperienceTab.Following -> ForumPostList(
+                        store = forumStore,
+                        onOpenPost = onOpenPost,
+                    )
                 }
             }
         }

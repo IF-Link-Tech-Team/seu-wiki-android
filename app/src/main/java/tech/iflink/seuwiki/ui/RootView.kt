@@ -53,7 +53,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import tech.iflink.seuwiki.data.AuthStore
+import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.data.FeedStore
+import tech.iflink.seuwiki.data.ForumStore
+import tech.iflink.seuwiki.data.launchSignIn
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
@@ -62,11 +65,13 @@ import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.ui.detail.FeedItemDetailScreen
 import tech.iflink.seuwiki.ui.detail.HomeFeedListScreen
 import tech.iflink.seuwiki.ui.detail.HomeExperienceListScreen
-import tech.iflink.seuwiki.ui.detail.CommunityComingSoonScreen
 import tech.iflink.seuwiki.ui.detail.DocEntryDetailScreen
 import tech.iflink.seuwiki.ui.detail.HandbookPartScreen
 import tech.iflink.seuwiki.ui.detail.SearchSourceListScreen
 import tech.iflink.seuwiki.ui.experience.ExperienceScreen
+import tech.iflink.seuwiki.ui.forum.ForumComposeScreen
+import tech.iflink.seuwiki.ui.forum.ForumPostDetailScreen
+import tech.iflink.seuwiki.ui.forum.ForumPostListScreen
 import tech.iflink.seuwiki.ui.feed.FeedScope
 import tech.iflink.seuwiki.ui.feed.FeedScreen
 import tech.iflink.seuwiki.ui.home.HomeScreen
@@ -123,6 +128,7 @@ object Routes {
     const val TOOL_TIMETABLE = "tools/timetable"
     const val TOOL_GPA = "tools/gpa"
     const val TOOL_PLACEHOLDER = "tools/other/{id}"
+    const val FORUM_COMPOSE = "forum/compose"
 
     /**
      * 编码**单个**路径段。
@@ -200,6 +206,11 @@ fun RootView(
     // 和「登录态是否健康」耦合起来，还可能让一次刷列表被续期失败牵连。
     val feedStore: FeedStore = viewModel(factory = FeedStore.Factory)
     val docsStore: DocsStore = viewModel(factory = DocsStore.Factory)
+    // 论坛与资讯**共用同一个 Logto 会话**：tokenProvider 直接指向 AuthStore 的
+    // accessToken()（自带续期），所以用户登录一次就能同时用在两边，不存在第二次登录。
+    val forumStore: ForumStore = viewModel(factory = ForumStore.factory { auth.accessToken() })
+    // 论坛里任何需要登录的动作（点赞/评论/发帖）都走这个回调，与个人页同一个登录流程。
+    val launchLogin: () -> Unit = { auth.launchSignIn(context) }
     val navController = rememberNavController()
 
     // 冷启动对账：补回被系统清掉的闹钟、撤掉已删除的提醒。
@@ -276,6 +287,8 @@ fun RootView(
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                     onOpenHandbookPart = { navController.navigate(Routes.handbookSection(it)) },
+                    forumStore = forumStore,
+                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
                 )
             }
             composable(AppTab.Tools.route) {
@@ -335,21 +348,57 @@ fun RootView(
                     onBack = { navController.popBackStack() },
                 )
             }
-            // 社区详情入口保留路由但只给「即将上线」：论坛后端虽有完整 HTTP API，
-            // 但本 App 尚未接入论坛客户端，发帖/点赞/评论/关注都调不通。原来的 ForumPostDetailScreen
-            // 是拿 MockData 里编造的帖子正文与「林晚舟」等虚构用户渲染的，
-            // 已从生产路径移除 —— 编造内容不该出现在用户面前。
+            // 论坛详情：接真实后端。
+            //
+            // **与 App 现有登录共用同一个 Logto 会话**，不另开一套登录：
+            // [ForumApiClient] 每次请求都把 [AuthStore.accessToken] 放进
+            // `Authorization: Bearer`，后端 `src/lib/logto/bearer.ts` 见到这个头
+            // 就只走 Bearer 校验、绝不回退 Cookie。
+            //
+            // 前置条件（不在本 App 侧）：论坛服务器必须配 `LOGTO_NATIVE_APP_ID`，
+            // 否则后端拒绝一切 Bearer token。登录态本身由 AuthStore 管。
             composable(
                 route = Routes.FORUM_DETAIL,
                 arguments = listOf(navArgument("id") { type = NavType.StringType }),
-            ) {
-                CommunityComingSoonScreen(onBack = { navController.popBackStack() })
+            ) { entry ->
+                ForumPostDetailScreen(
+                    store = forumStore,
+                    postId = Routes.decode(entry.arguments?.getString("id")),
+                    onBack = { navController.popBackStack() },
+                    onLoginRequired = launchLogin,
+                )
             }
+            // 话题页 = 按 tag slug 过滤的帖子列表。后端没有 /api/tags，
+            // 中文话题名从本地镜像的 TopicCatalog 取，slug 直接透传给后端。
             composable(
                 route = Routes.TOPIC_DETAIL,
                 arguments = listOf(navArgument("slug") { type = NavType.StringType }),
-            ) {
-                CommunityComingSoonScreen(onBack = { navController.popBackStack() })
+            ) { entry ->
+                val slug = Routes.decode(entry.arguments?.getString("slug"))
+                val topicName = TopicCatalog.topics
+                    .firstOrNull { it.slug == slug }?.name
+                    ?: TopicCatalog.topics.firstOrNull { t -> t.subtags.any { it.slug == slug } }
+                        ?.let { t -> "${t.name} · ${t.subtags.first { it.slug == slug }.name}" }
+                    ?: "话题"
+                ForumPostListScreen(
+                    store = forumStore,
+                    title = topicName,
+                    tagSlug = slug,
+                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(Routes.FORUM_COMPOSE) {
+                ForumComposeScreen(
+                    store = forumStore,
+                    onBack = { navController.popBackStack() },
+                    onLoginRequired = launchLogin,
+                    onPosted = { id ->
+                        // 建完帖直接进详情，并把这个帖子从栈里去掉，用户返回时回列表而不是发帖页。
+                        navController.popBackStack()
+                        navController.navigate(Routes.forumDetail(id))
+                    },
+                )
             }
             composable(
                 route = Routes.HANDBOOK_SECTION,
