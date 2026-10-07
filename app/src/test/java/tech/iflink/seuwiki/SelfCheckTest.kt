@@ -16,9 +16,8 @@ import org.robolectric.RuntimeEnvironment
 import tech.iflink.seuwiki.data.campusHtmlToAnnotatedString
 import tech.iflink.seuwiki.data.parseIso8601
 import tech.iflink.seuwiki.data.UserProfileStore
-import tech.iflink.seuwiki.data.resolveBookmarks
-import tech.iflink.seuwiki.models.DocEntry
-import tech.iflink.seuwiki.models.DocKind
+import tech.iflink.seuwiki.data.bookmarkDisplayTitle
+import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.models.UserFacingError
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.ui.Format
@@ -290,7 +289,13 @@ class SelfCheckTest {
         val declared = sources.values.flatMap { s ->
             Regex("""iconKey\s*=\s*"([^"]+)"""").findAll(s).map { it.groupValues[1] }.toList()
         }
-        val used = (passedDirectly + declared).toSet()
+        // `ForumGlyph(icon = "…")` / `HandbookGlyph("…")` / `StatGlyph(icon = "…")`
+        // 这三个包装组件内部才调 SeuIcons.of(icon)，字面量在调用点，直扫扫不到。
+        val viaGlyphWrappers = sources.values.flatMap { s ->
+            Regex("""(?:ForumGlyph|HandbookGlyph|StatGlyph)\(\s*(?:icon\s*=\s*)?"([^"]+)"""")
+                .findAll(s).map { it.groupValues[1] }.toList()
+        }
+        val used = (passedDirectly + declared + viaGlyphWrappers).toSet()
 
         assertTrue("应当扫到 SF 名", used.isNotEmpty())
         val unmapped = used.filterNot { SeuIcons.isMapped(it) }.sorted()
@@ -362,15 +367,6 @@ class SelfCheckTest {
 
     // MARK: - 收藏
 
-    /** 测试里用的假索引。真实数据要打网络，这里只关心 slug ↔ 条目的映射。 */
-    private val index = listOf(
-        DocEntry(slug = "survival/a", kind = DocKind.Survival, title = "保研经验"),
-        DocEntry(slug = "survival/b", kind = DocKind.Survival, title = "ACM 竞赛"),
-        DocEntry(slug = "experience/c", kind = DocKind.Experience, title = "选课指南"),
-    )
-
-    private fun lookup(slug: String): DocEntry? = index.firstOrNull { it.slug == slug }
-
     /** SharedPreferences 是进程级的，同名会互相污染，所以每个用例用独立文件名。 */
     private var prefsSeq = 0
 
@@ -407,31 +403,13 @@ class SelfCheckTest {
     }
 
     @Test
-    fun `收藏 索引里没有的 slug 被跳过而不是显示空白行`() {
-        // 对应 iOS `loadBookmarks()`：只保留命中的条目。两端必须一致，
-        // 否则安卓会多出一行没标题的东西。
-        val resolved = resolveBookmarks(setOf("survival/a", "survival/已下线"), ::lookup)
-        assertEquals("只保留命中的 1 条", 1, resolved.size)
-        assertEquals("命中的就是那条", "survival/a", resolved.single().slug)
-    }
-
-    @Test
-    fun `收藏 顺序按标题排 不随集合迭代顺序变`() {
-        // Set 的迭代顺序不保证稳定；不排序的话收藏列表每次重组都可能重排。
-        // 输入是刻意打乱的，期望顺序是写死的。
-        val resolved = resolveBookmarks(setOf("experience/c", "survival/a", "survival/b"), ::lookup)
-        assertEquals(
-            listOf("ACM 竞赛", "保研经验", "选课指南"),
-            resolved.map { it.title },
-        )
-    }
-
-    @Test
-    fun `收藏 标题取自索引而不是存的快照`() {
-        // 存 slug 而不是标题快照：内容改名后要从索引回填新名字，不能留旧名。
-        val renamed = listOf(DocEntry(slug = "survival/a", kind = DocKind.Survival, title = "改名后的标题"))
-        val resolved = resolveBookmarks(setOf("survival/a")) { slug -> renamed.firstOrNull { it.slug == slug } }
-        assertEquals("改名后的标题", resolved.single().title)
+    fun `收藏 兜底标题取 slug 最后一段`() {
+        // 手册/经验索引随旧信源移除后，收藏列表不再回填索引标题，
+        // 用 slug 的最后一段兜底 —— 它是 slug 里信息量最大的一部分。
+        assertEquals("1-认识", bookmarkDisplayTitle("survival/观点篇/1-认识"))
+        assertEquals("a", bookmarkDisplayTitle("survival/a"))
+        assertEquals("没有斜杠就原样显示", "lonely", bookmarkDisplayTitle("lonely"))
+        assertEquals("尾斜杠回退整串", "survival/", bookmarkDisplayTitle("survival/"))
     }
 
     // MARK: - 搜索信源路由键
@@ -994,6 +972,7 @@ class SelfCheckTest {
         // 回归锁：ComposeFab 靠 onCompose 非空才渲染（null 就第一行 return）。
         // 这条链路跨三个文件，之前正是在 ExperienceScreen → ForumPostList
         // 这一段漏传，签名接了、参数没转发，App 编得过、按钮就是不出现。
+        // 现在的链路是 ExperienceTab.Hot → ForumHotList(onCompose = …)。
         val root = File("src/main/java/tech/iflink/seuwiki")
         val experience = File(root, "ui/experience/ExperienceScreen.kt")
         val forum = File(root, "ui/forum/ForumScreens.kt")
@@ -1002,19 +981,19 @@ class SelfCheckTest {
         assertTrue("应当找到 ForumScreens.kt", forum.isFile)
         assertTrue("应当找到 RootView.kt", rootView.isFile)
 
-        // 1) 列表组件内部确实渲染了 FAB
+        // 1) 热榜列表内部确实渲染了 FAB
         assertTrue(
-            "ForumPostList 必须渲染 ComposeFab",
+            "ForumHotList 必须渲染 ComposeFab",
             Regex("""ComposeFab\(\s*onCompose\s*=\s*onCompose\s*\)""").containsMatchIn(forum.readText(Charsets.UTF_8)),
         )
-        // 2) 「关注」分区把回调转发进去 —— 本次真正断掉的那一环
-        val followingCall = Regex(
-            """ExperienceTab\.Following\s*->\s*ForumPostList\((?:[^()]|\([^()]*\))*\)""",
+        // 2) 「热门」子页把回调转发进 ForumHotList —— 断掉的话按钮整个不出现
+        val hotCall = Regex(
+            """ExperienceTab\.Hot\s*->\s*ForumHotList\((?:[^()]|\([^()]*\))*\)""",
         ).find(experience.readText(Charsets.UTF_8))
-        assertNotNull("应当找到「关注」分区对 ForumPostList 的调用", followingCall)
+        assertNotNull("应当找到「热门」子页对 ForumHotList 的调用", hotCall)
         assertTrue(
-            "「关注」分区必须把 onCompose 转发给 ForumPostList，否则发帖按钮不出现",
-            followingCall!!.value.contains("onCompose"),
+            "「热门」子页必须把 onCompose 转发给 ForumHotList，否则发帖按钮不出现",
+            hotCall!!.value.contains("onCompose"),
         )
         // 3) 顶层路由给了真实目标
         assertTrue(
@@ -1110,5 +1089,258 @@ class SelfCheckTest {
         assertNull("null 不该拼出地址", ForumApiClient.absoluteUrl(null))
         assertNull("空串不该拼出地址", ForumApiClient.absoluteUrl(""))
         assertNull("纯空白不该拼出地址", ForumApiClient.absoluteUrl("   "))
+    }
+
+    // MARK: - 热榜（offset 分页 / 浏览数 / 置顶）
+
+    @Test
+    fun `热榜用 offset 分页且一个字节都不能带 cursor`() {
+        // 后端热榜只认 offset：对 hot 传 cursor 直接 400 INVALID_CURSOR。
+        withLocalApi({ 200 to """{"posts":[],"next_offset":40,"total_count":123}""" }) { api ->
+            val page = runBlocking {
+                ForumApiClient(baseUrl = api.baseUrl).posts(sort = ForumSort.Hot, offset = 40)
+            }
+            val q = requireNotNull(requireNotNull(api.last).query)
+            assertTrue("必须带 sort=hot", q.contains("sort=hot"))
+            assertTrue("必须带 offset=40", q.contains("offset=40"))
+            assertFalse("hot 绝不能带 cursor", q.contains("cursor="))
+            assertEquals(40, page.nextOffset)
+            assertEquals(123, page.totalCount)
+            assertNull("热榜响应没有 next_cursor", page.nextCursor)
+        }
+    }
+
+    @Test
+    fun `列表解析浏览数与置顶时间`() {
+        // views_count 是反范式列；pinned_at 非空即置顶（热榜置顶帖排最前）。
+        val json = """{"posts":[{"id":"p1","content":"hi","views_count":45,
+            "pinned_at":"2026-10-07T04:47:20.123456+00:00"}],"next_cursor":null}"""
+        withLocalApi({ 200 to json }) { api ->
+            val post = runBlocking { ForumApiClient(baseUrl = api.baseUrl).posts() }.posts.single()
+            assertEquals(45, post.viewsCount)
+            assertTrue("pinned_at 非空即置顶", post.isPinned)
+            assertNotNull(post.pinnedAt)
+        }
+    }
+
+    @Test
+    fun `日期解析 带 6 位微秒与时区偏移`() {
+        // PostgREST 序列化的 timestamptz 形如 2026-10-07T04:47:20.123456+00:00。
+        assertNotNull(
+            "6 位微秒必须能解析",
+            parseIso8601("2026-10-07T04:47:20.123456+00:00"),
+        )
+    }
+
+    @Test
+    fun `帖子详情解析已收录的手册文章`() {
+        // 详情接口带 handbook_article（该帖沉淀出的最新一篇），详情页据此给
+        // 「已收录进东大生存手册」入口。
+        val json = """{"post":{"id":"p1","content":"hi"},"featured":true,
+            "handbook_article":{"id":"a1","title":"宿舍门禁全攻略"}}"""
+        withLocalApi({ 200 to json }) { api ->
+            val post = runBlocking { ForumApiClient(baseUrl = api.baseUrl).postDetail("p1") }
+            assertEquals("a1", post.handbookArticle?.id)
+            assertEquals("宿舍门禁全攻略", post.handbookArticle?.title)
+            assertTrue(post.featured)
+        }
+    }
+
+    @Test
+    fun `浏览计数成功返回权威值 失败静默不抛`() {
+        // incrementView 是锦上添花：详情页已经拿着列表给的数字，这一发挂了
+        // 必须静默返回 null，绝不能反过来让详情显示错误。
+        withLocalApi({ 200 to """{"views":42}""" }) { api ->
+            assertEquals(42, runBlocking { ForumApiClient(baseUrl = api.baseUrl).incrementView("x") })
+            val req = requireNotNull(api.last)
+            assertEquals("POST", req.method)
+            assertEquals("/api/posts/x/view", req.path)
+        }
+        withLocalApi({ 500 to """{"error":"INTERNAL"}""" }) { api ->
+            assertNull(
+                "500 必须吞掉返回 null",
+                runBlocking { ForumApiClient(baseUrl = api.baseUrl).incrementView("x") },
+            )
+        }
+    }
+
+    // MARK: - 关注（follows / 关注流）
+
+    @Test
+    fun `关注切换 body 是严格白名单两键`() {
+        // lib/follows/create-input.mjs 多一个 key 就 400 INVALID_BODY。
+        withLocalApi({ 200 to """{"followed":true}""" }) { api ->
+            assertTrue(runBlocking { ForumApiClient(baseUrl = api.baseUrl).toggleFollowTag("baoyan") })
+            val req = requireNotNull(api.last)
+            assertEquals("POST", req.method)
+            assertEquals("/api/follows", req.path)
+            val obj = kotlinx.serialization.json.Json.parseToJsonElement(requireNotNull(req.body))
+                as kotlinx.serialization.json.JsonObject
+            assertEquals(
+                "body 只能是 target_type/target_id 这两个 key",
+                setOf("target_type", "target_id"),
+                obj.keys.toSet(),
+            )
+            assertEquals("tag", obj["target_type"].toString().trim('"'))
+            assertEquals("baoyan", obj["target_id"].toString().trim('"'))
+        }
+    }
+
+    @Test
+    fun `关注目录解析成板块列表`() {
+        val json = """{"follows":[{"tag_slug":"baoyan","tag_name":"保研","topic_slug":"baoyan"}],
+            "next_cursor":null}"""
+        withLocalApi({ 200 to json }) { api ->
+            val tags = runBlocking { ForumApiClient(baseUrl = api.baseUrl).followedTags() }
+            val tag = tags.single()
+            assertEquals("baoyan", tag.slug)
+            assertEquals("保研", tag.name)
+            assertEquals("baoyan", tag.topicSlug)
+            assertEquals(
+                "target_type=tag 必须进 query",
+                "target_type=tag",
+                requireNotNull(api.last).query,
+            )
+        }
+    }
+
+    @Test
+    fun `关注流 401 必须识别成未登录`() {
+        // ForumStore 据此给登录引导而不是网络错误；认错了用户会看到「加载失败」。
+        withLocalApi({ 401 to """{"error":"UNAUTHORIZED"}""" }) { api ->
+            val e = runCatching {
+                runBlocking { ForumApiClient(baseUrl = api.baseUrl).followingFeed() }
+            }.exceptionOrNull() as? ForumApiClient.ForumApiException
+            assertNotNull("401 应抛 ForumApiException", e)
+            assertTrue("必须识别成未登录", e!!.isUnauthorized)
+        }
+    }
+
+    @Test
+    fun `关注流零关注时下发推荐板块`() {
+        // 零关注：posts 为空且下发 suggested_tags（对象数组，不是字符串数组）。
+        val json = """{"posts":[],"next_cursor":null,
+            "suggested_tags":[{"slug":"baoyan","name":"保研","post_count":86}]}"""
+        withLocalApi({ 200 to json }) { api ->
+            val page = runBlocking { ForumApiClient(baseUrl = api.baseUrl).followingFeed() }
+            assertTrue(page.posts.isEmpty())
+            val suggested = page.suggestedTags.single()
+            assertEquals("baoyan", suggested.slug)
+            assertEquals("保研", suggested.name)
+            assertEquals(86, suggested.postCount)
+        }
+    }
+
+    // MARK: - 东大生存手册
+
+    @Test
+    fun `手册板块列表解析文章数与子标签`() {
+        val json = """{"sections":[{"slug":"baoyan","name":"保研","type":"topic",
+            "article_count":12,
+            "children":[{"slug":"baoyan-jingyan","name":"经验分享","article_count":5}]}]}"""
+        withLocalApi({ 200 to json }) { api ->
+            val sections = runBlocking { ForumApiClient(baseUrl = api.baseUrl).handbookSections() }
+            val section = sections.single()
+            assertEquals("baoyan", section.slug)
+            assertEquals("保研", section.name)
+            assertEquals(12, section.articleCount)
+            assertEquals(5, section.children.single().articleCount)
+            assertEquals("/api/handbook/sections", requireNotNull(api.last).path)
+        }
+    }
+
+    @Test
+    fun `手册板块详情解析 子标签没有文章数时兜底 0`() {
+        // 板块详情接口的 children 不带 article_count（只有列表接口给），
+        // 客户端必须兜底成 0 而不是崩。
+        val json = """{"section":{"slug":"baoyan-jingyan","name":"经验分享","type":"tag",
+            "parent_slug":"baoyan","children":[{"slug":"c1","name":"子标签"}]},
+            "articles":[{"id":"a1","tag_slug":"baoyan-jingyan","title":"宿舍门禁全攻略",
+            "author_display":"编辑部","published_at":"2026-10-01",
+            "source_post":{"id":"p1","title":"原帖"}}]}"""
+        withLocalApi({ 200 to json }) { api ->
+            val page = runBlocking { ForumApiClient(baseUrl = api.baseUrl).handbookSection("baoyan-jingyan") }
+            assertEquals("经验分享", page.name)
+            assertEquals("baoyan", page.parentSlug)
+            assertEquals(0, page.children.single().articleCount)
+            val article = page.articles.single()
+            assertEquals("宿舍门禁全攻略", article.title)
+            assertEquals("p1", article.sourcePost?.id)
+        }
+    }
+
+    @Test
+    fun `手册文章详情解析正文与原帖`() {
+        val json = """{"article":{"id":"a1","tag_slug":"baoyan","title":"宿舍门禁全攻略",
+            "author_display":"编辑部","content_html":"<p>你好</p>",
+            "published_at":"2026-10-01T00:00:00Z",
+            "source_post":{"id":"p1","title":"门禁原帖","likes_count":3,"comments_count":2,
+            "views_count":10,"author":{"id":"u1","display_name":"Stella",
+            "username":"stella","avatar_url":null}}}}"""
+        withLocalApi({ 200 to json }) { api ->
+            val article = runBlocking { ForumApiClient(baseUrl = api.baseUrl).handbookArticle("a1") }
+            assertEquals("<p>你好</p>", article.contentHtml)
+            assertEquals("编辑部", article.authorDisplay)
+            assertNotNull(article.publishedAt)
+            val source = requireNotNull(article.sourcePost)
+            assertEquals("p1", source.id)
+            assertEquals(10, source.viewsCount)
+            assertEquals("Stella", source.author?.nameOrFallback)
+        }
+    }
+
+    // MARK: - 论坛搜索（type=all 两桶同返）
+
+    @Test
+    fun `论坛搜索两桶同返且各带游标`() {
+        // type=all：posts 与 articles 两组同返，游标带 scope。
+        val json = """{"posts":{"items":[{"id":"s1","title":"保研帖","snippet":"…片段…",
+            "author":null,"likes_count":1,"comments_count":2,"views_count":3,
+            "created_at":"2026-10-01T00:00:00Z"}],"next_cursor":"c1"},
+            "articles":{"items":[{"id":"a1","title":"手册文","snippet":"摘",
+            "tag_slug":"baoyan","published_at":"2026-10-01","source_post_id":"p1"}],
+            "next_cursor":null}}"""
+        withLocalApi({ 200 to json }) { api ->
+            val results = runBlocking { ForumApiClient(baseUrl = api.baseUrl).search("保研") }
+            val post = results.posts.single()
+            assertEquals("s1", post.id)
+            assertEquals("…片段…", post.snippet)
+            assertEquals(3, post.viewsCount)
+            assertEquals("c1", results.postsNextCursor)
+            val article = results.articles.single()
+            assertEquals("baoyan", article.tagSlug)
+            assertEquals("p1", article.sourcePostId)
+            assertNull(results.articlesNextCursor)
+            val q = requireNotNull(requireNotNull(api.last).query)
+            assertTrue("必须带 type=all", q.contains("type=all"))
+            assertTrue("必须带关键词", q.contains("q="))
+            assertEquals("/api/search", requireNotNull(api.last).path)
+        }
+    }
+
+    // MARK: - 话题目录
+
+    @Test
+    fun `话题目录结构与后端 catalog 对齐`() {
+        // 目录镜像自论坛后端 src/lib/tags/catalog.mjs：8 主题 + 29 子标签，
+        // slug 全集 37 个互不重复，格式与后端 slug 规则一致。
+        assertEquals("主题必须恰好 8 个", 8, TopicCatalog.topics.size)
+        val subtagCount = TopicCatalog.topics.sumOf { it.subtags.size }
+        assertEquals("子标签必须恰好 29 个", 29, subtagCount)
+        val slugs = TopicCatalog.topics.map { it.slug } +
+            TopicCatalog.topics.flatMap { t -> t.subtags.map { it.slug } }
+        assertEquals("slug 全集 37 个", 37, slugs.size)
+        assertEquals("slug 不得重复", slugs.size, slugs.toSet().size)
+        val slugRule = Regex("""^[a-z0-9][a-z0-9-]{0,39}$""")
+        slugs.forEach { slug ->
+            assertTrue("slug 不合后端规则：$slug", slugRule.matches(slug))
+        }
+    }
+
+    @Test
+    fun `话题目录 nameForSlug 两级都能查`() {
+        assertEquals("保研", TopicCatalog.nameForSlug("baoyan"))
+        assertNotNull("子标签也要能查", TopicCatalog.nameForSlug("baoyan-jingyan"))
+        assertNull("未知 slug 返回 null 而不是乱兜", TopicCatalog.nameForSlug("不存在的"))
     }
 }

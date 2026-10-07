@@ -2,6 +2,7 @@ package tech.iflink.seuwiki.design
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.LibraryBooks
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.Comment
 import androidx.compose.material.icons.automirrored.outlined.Assignment
@@ -18,10 +19,12 @@ import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Newspaper
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.AccountTree
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddCircle
@@ -34,14 +37,17 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.CreditCard
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.DirectionsBus
 import androidx.compose.material.icons.outlined.Eco
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.EventAvailable
 import androidx.compose.material.icons.outlined.FilterList
 import androidx.compose.material.icons.outlined.Flight
 import androidx.compose.material.icons.outlined.Inbox
 import androidx.compose.material.icons.outlined.LocalFireDepartment
+import androidx.compose.material.icons.outlined.LocalOffer
 import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Percent
@@ -109,6 +115,7 @@ object SeuIcons {
 
         // Handbook
         "books.vertical" to Icons.AutoMirrored.Outlined.LibraryBooks,
+        "books.vertical.fill" to Icons.AutoMirrored.Filled.LibraryBooks,
         "figure.walk.arrival" to Icons.AutoMirrored.Outlined.DirectionsWalk,
         "yensign.circle" to Icons.Outlined.AccountBalanceWallet,
         "building.2" to Icons.Outlined.Apartment,
@@ -143,6 +150,16 @@ object SeuIcons {
         "xmark" to Icons.Filled.Close,
         "checkmark" to Icons.Filled.Check,
         "ellipsis.circle" to Icons.Outlined.Apps,
+
+        // Forum：置顶 / 浏览 / 关注 / 登录引导 / 发帖
+        "pin.fill" to Icons.Filled.PushPin,
+        "doc.text" to Icons.Outlined.Description,
+        "tag" to Icons.Outlined.LocalOffer,
+        "bubble.left" to Icons.Outlined.ChatBubbleOutline,
+        "text.bubble" to Icons.Outlined.ChatBubbleOutline,
+        "person.crop.circle" to Icons.Outlined.AccountCircle,
+        "wifi.exclamationmark" to Icons.Outlined.WifiOff,
+        "square.and.pencil" to Icons.Outlined.Edit,
 
         // Detail affordances
         "clock.badge.exclamationmark" to Icons.Outlined.Schedule,

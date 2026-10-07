@@ -1,28 +1,25 @@
 package tech.iflink.seuwiki.data
 
 import kotlinx.serialization.Serializable
-import tech.iflink.seuwiki.models.DocAnchor
 import tech.iflink.seuwiki.models.DocEntry
-import tech.iflink.seuwiki.models.DocFilter
-import tech.iflink.seuwiki.models.DocGroup
 import tech.iflink.seuwiki.models.DocKind
-import tech.iflink.seuwiki.models.DocPart
-import tech.iflink.seuwiki.models.FeedItem
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
 /**
- * 手册 / 经验长文 / 统一搜索三类文档接口的客户端。
+ * 文档条目详情接口的客户端。
  *
  * 与 [FeedApiClient] 同样只用 `HttpURLConnection` + 已有的 kotlinx-serialization，
  * 不引入网络库；所有方法阻塞 I/O，调用方需在 IO 调度器上执行（见 [DocsStore]）。
  *
- * **这些接口一律不带 Authorization**。`api/site` 这一组都是公开只读的 GET，
- * 后端不校验鉴权（实测带一个乱写的 Bearer 一样返回 200）。挂了 token 只会带来
- * 两个坏处：把「能不能读到内容」和「登录态是否健康」耦合起来，以及让每次文档
- * 请求都可能被一次续期失败牵连。
+ * **这个接口不带 Authorization**。`api/site` 这一组是公开只读的 GET，后端不校验
+ * 鉴权。挂了 token 只会把「能不能读到内容」和「登录态是否健康」耦合起来。
+ *
+ * 曾经的 `survival()`（手册文档树）与 `experience()`（经验长文）已随信源切换移除：
+ * 手册改走论坛后端的 `/api/handbook/` 系列接口（见 [ForumApiClient]），经验长文整体下线。
+ * 这里只剩条目详情——收藏与深链仍会按 slug 打开它。
  */
 class DocsApiClient(
     private val baseUrl: String = "https://seu.wiki",
@@ -32,35 +29,6 @@ class DocsApiClient(
         ignoreUnknownKeys = true
         isLenient = true
         coerceInputValues = true
-    }
-
-    /** `GET /api/site/docs/survival` —— 真实的「篇 → 组 → 条」文档树。 */
-    suspend fun survival(): List<DocPart> {
-        val dto: SurvivalResponse = get("/api/site/docs/survival", emptyList())
-        return dto.parts.map { it.toDocPart() }
-    }
-
-    /**
-     * `GET /api/site/docs/experience?category=&grade=&college=`
-     *
-     * 返回条目列表与**服务端给的**分面筛选项；筛选项随筛选结果变化，
-     * 所以每次都连同 items 一起取回，不单独缓存。
-     */
-    suspend fun experience(
-        category: String? = null,
-        grade: String? = null,
-        college: String? = null,
-    ): ExperiencePage {
-        val query = buildList {
-            category?.takeIf { it.isNotBlank() }?.let { add("category" to it) }
-            grade?.takeIf { it.isNotBlank() }?.let { add("grade" to it) }
-            college?.takeIf { it.isNotBlank() }?.let { add("college" to it) }
-        }
-        val dto: ExperienceResponse = get("/api/site/docs/experience", query)
-        return ExperiencePage(
-            items = dto.items.map { it.toDocEntry(DocKind.Experience) },
-            filters = dto.filters.map { DocFilter(it.key, it.label, it.values) },
-        )
     }
 
     /** `GET /api/site/docs/{slug}` —— 条目详情，含正文 `html` 与目录 `headings`。 */
@@ -79,11 +47,6 @@ class DocsApiClient(
     }
 
     // MARK: - 结果类型
-
-    data class ExperiencePage(
-        val items: List<DocEntry>,
-        val filters: List<DocFilter>,
-    )
 
     data class DocDetail(
         val entry: DocEntry,
@@ -168,52 +131,6 @@ class DocsApiClient(
 class DocsApiException(val status: Int, val path: String) :
     IOException("GET $path 返回 HTTP $status")
 
-/** `GET /api/site/docs/survival` 的响应。 */
-@Serializable
-private data class SurvivalResponse(val parts: List<SurvivalPartDto> = emptyList())
-
-@Serializable
-private data class SurvivalPartDto(
-    val key: String = "",
-    val label: String = "",
-    val groups: List<SurvivalGroupDto> = emptyList(),
-)
-
-@Serializable
-private data class SurvivalGroupDto(
-    val key: String = "",
-    val items: List<DocEntryDto> = emptyList(),
-)
-
-/** 手册 / 经验条目，字段完全一致，只靠外层的 kind 区分。 */
-@Serializable
-private data class DocEntryDto(
-    val slug: String = "",
-    val kind: String? = null,
-    val title: String = "",
-    val description: String? = null,
-    val author: String? = null,
-    val occurredAt: String? = null,
-    val category: String? = null,
-    val grade: String? = null,
-    val college: String? = null,
-    val part: String? = null,
-    val position: Int? = null,
-)
-
-@Serializable
-private data class ExperienceResponse(
-    val filters: List<DocFilterDto> = emptyList(),
-    val items: List<DocEntryDto> = emptyList(),
-)
-
-@Serializable
-private data class DocFilterDto(
-    val key: String = "",
-    val label: String = "",
-    val values: List<String> = emptyList(),
-)
-
 /**
  * `GET /api/site/docs/{slug}` 的响应。
  *
@@ -255,31 +172,6 @@ private data class DocSiblingDto(
 )
 
 // MARK: - DTO 映射
-
-private fun SurvivalPartDto.toDocPart() = DocPart(
-    key = key,
-    label = label,
-    groups = groups.map { g ->
-        DocGroup(
-            key = g.key,
-            items = g.items.map { it.toDocEntry(DocKind.Survival) },
-        )
-    },
-)
-
-private fun DocEntryDto.toDocEntry(kind: DocKind) = DocEntry(
-    slug = slug,
-    kind = DocKind.fromKey(kind.key) ?: kind,
-    title = title,
-    description = description?.takeIf { it.isNotBlank() },
-    author = author?.takeIf { it.isNotBlank() },
-    occurredAt = occurredAt.toEpochMillisOrNull(),
-    category = category?.takeIf { it.isNotBlank() },
-    grade = grade?.takeIf { it.isNotBlank() },
-    college = college?.takeIf { it.isNotBlank() },
-    part = part?.takeIf { it.isNotBlank() },
-    position = position,
-)
 
 private fun DocDetailResponse.toDocEntry(kind: DocKind) = DocEntry(
     slug = slug,

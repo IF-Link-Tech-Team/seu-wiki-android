@@ -1,91 +1,73 @@
 package tech.iflink.seuwiki.ui.experience
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.pulltorefresh.PullToRefreshBox
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import tech.iflink.seuwiki.R
-import tech.iflink.seuwiki.data.DocsStore
-import tech.iflink.seuwiki.data.ExperienceSelection
 import tech.iflink.seuwiki.data.ForumStore
-import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.design.ConsoleBar
-import tech.iflink.seuwiki.design.SeuIcons
-import tech.iflink.seuwiki.design.SeuTheme
-import tech.iflink.seuwiki.design.SeuType
-import tech.iflink.seuwiki.design.cardStyle
-import tech.iflink.seuwiki.models.ExperienceTab
-import tech.iflink.seuwiki.models.DocEntry
-import tech.iflink.seuwiki.models.DocPart
-import tech.iflink.seuwiki.ui.EmptyStateView
-import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
-import tech.iflink.seuwiki.ui.forum.ForumPostList
+import tech.iflink.seuwiki.ui.forum.ForumFollowingList
+import tech.iflink.seuwiki.ui.forum.ForumHotList
+
+/**
+ * 经验 tab 的三个子页，按 console 胶囊顺序。
+ *
+ * 与 iOS `ForumFeedTab` 对齐：热门（热榜，置顶优先）/ 关注（关注流）/ 东大生存手册。
+ * 数据全部来自论坛后端 `https://forum.seu.wiki`；早期的「热门」是
+ * `/api/site/docs/experience` 经验长文、「话题」是其分面筛选，两者已随经验长文
+ * 信源一并移除。
+ */
+enum class ExperienceTab(val key: String, @StringRes val labelRes: Int) {
+    /** 论坛热榜（`GET /api/posts?sort=hot`，置顶优先，offset 分页）。 */
+    Hot("hot", R.string.experience_tab_hot),
+
+    /** 关注流（`GET /api/feed/following`，需登录；401 给登录引导）。 */
+    Following("following", R.string.experience_tab_following),
+
+    /** 东大生存手册板块列表（`GET /api/handbook/sections`）。 */
+    Handbook("handbook", R.string.experience_tab_handbook);
+
+    companion object {
+        val all: List<ExperienceTab> get() = entries.toList()
+    }
+}
 
 /**
  * 经验 tab。
  *
- * 四个子页全部来自**真实后端数据**，没有一条编造内容：
- * - 热门：经验长文列表（`GET /api/site/docs/experience`）
- * - 话题：同上的分面筛选，用服务端 `filters[]` 给的真实取值
- * - 东大生存手册：真实文档树（`GET /api/site/docs/survival`）
- * - 关注：诚实的空状态。论坛后端已有完整 HTTP API，但本 App 还没有论坛客户端，
- *   社区功能接不通，所以这里明确写「即将上线」而不是拿假帖子填坑。
+ * 三个子页全部来自**论坛后端的真实数据**：
+ * - 热门：热榜帖子流（[ForumHotList]），右下角发帖按钮挂在这一页
+ * - 关注：关注流（[ForumFollowingList]），未登录给登录引导、零关注给推荐板块
+ * - 东大生存手册：板块列表（[HandbookHomeTab]）
  *
  * console 胶囊与 pager 双向绑定：点胶囊滚动 pager，滑动 pager 跟随胶囊，
  * 与 iOS 的 `ExperienceHomeView` 一致。
  */
 @Composable
 fun ExperienceScreen(
-    profile: UserProfileStore,
-    docs: DocsStore,
     forumStore: ForumStore,
+    isLoggedIn: Boolean,
     onOpenProfile: () -> Unit,
-    onOpenEntry: (String) -> Unit,
-    onOpenHandbookPart: (String) -> Unit,
+    onLogin: () -> Unit,
     onOpenPost: (String) -> Unit,
     onCompose: () -> Unit,
     onOpenTopic: (String) -> Unit,
+    onOpenHandbookSection: (slug: String, name: String) -> Unit,
 ) {
     val tabs = ExperienceTab.all
     var tabKey by rememberSaveable { mutableStateOf(ExperienceTab.Hot.key) }
@@ -119,342 +101,29 @@ fun ExperienceScreen(
             )
             HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
                 when (tabs[page]) {
-                    ExperienceTab.Hot -> ExperienceList(docs, onOpenEntry)
-                    ExperienceTab.Topics -> ExperienceFacets(docs, onOpenEntry)
-                    ExperienceTab.Handbook -> HandbookTree(docs, onOpenHandbookPart, onOpenEntry)
-                    // 「关注」分区接真实论坛帖子列表。原来的 FollowingComingSoon()
-                    // 是个占位页：论坛后端还没接。现在直接读 forum.seu.wiki 的公开帖子，
-                    // 匿名也能看 —— 用户不登录也有东西可读，而不是一堵「即将上线」。
-                    ExperienceTab.Following -> ForumPostList(
+                    // 发帖按钮（FAB）挂在这一页：ForumHotList 内部靠 onCompose 非空
+                    // 才渲染 ComposeFab，不传的话按钮整个不会出现。
+                    ExperienceTab.Hot -> ForumHotList(
                         store = forumStore,
                         onOpenPost = onOpenPost,
-                        // 必须转发：不传的话 ForumPostList 里 onCompose 默认是 null，
-                        // ComposeFab 第一行就 return，右下角发帖按钮整个不会出现。
                         onCompose = onCompose,
                         onOpenTopic = onOpenTopic,
                     )
-                }
-            }
-        }
-    }
-}
 
-/** 热门 / 话题 共用的列表：同一份数据，只是「话题」页顶部多了分面筛选。 */
-@Composable
-private fun ExperienceList(
-    docs: DocsStore,
-    onOpenEntry: (String) -> Unit,
-) {
-    val context = LocalContext.current
-    ExperienceState(docs) {
-        if (docs.experience.isEmpty() && !docs.experienceLoading) {
-            EmptyStateView(
-                title = stringResource(R.string.experience_empty),
-                description = docs.experienceError?.format(context)
-                    ?: stringResource(R.string.experience_empty_desc),
-                icon = { EmptyIcon("text.book.closed") },
-                topPadding = 64.dp,
-            )
-        } else {
-            LazyColumn(
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = ListBottomPadding),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(docs.experience, key = { it.slug }) { entry ->
-                    DocEntryCard(entry = entry, onClick = { onOpenEntry(entry.slug) })
-                }
-            }
-        }
-    }
-}
-
-/**
- * 话题 —— 经验长文的分面筛选。
- *
- * 筛选项**一律取服务端 `filters[]` 的真实取值**（实测：场景 7 项、年级 6 项、
- * 学院 4 项），不在客户端另编一套中文分类。
- */
-@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
-@Composable
-private fun ExperienceFacets(
-    docs: DocsStore,
-    onOpenEntry: (String) -> Unit,
-) {
-    val scope = rememberCoroutineScope()
-    ExperienceState(docs) {
-        val filters = docs.experienceFilters
-        val selection = docs.experienceSelection
-        PullToRefreshBox(
-            // 下拉真的重拉经验长文，不是假动画。
-            isRefreshing = docs.experienceLoading,
-            onRefresh = { scope.launch { docs.loadExperience(selection, force = true) } },
-            modifier = Modifier.fillMaxSize(),
-        ) {
-        LazyColumn(
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = ListBottomPadding),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            item {
-                Column(
-                    Modifier.cardStyle(padding = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Text(stringResource(R.string.experience_filter_title), style = SeuType.SubheadlineSemibold)
-                    filters.forEach { facet ->
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(
-                                facet.label,
-                                style = SeuType.Footnote,
-                                color = SeuTheme.colors.secondaryLabel,
-                            )
-                            FlowRow(
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                verticalArrangement = Arrangement.spacedBy(8.dp),
-                            ) {
-                                facet.values.forEach { value ->
-                                    FacetChip(
-                                        text = value,
-                                        selected = when (facet.key) {
-                                            "category" -> selection.category == value
-                                            "grade" -> selection.grade == value
-                                            "college" -> selection.college == value
-                                            else -> false
-                                        },
-                                        onClick = {
-                                            scope.launch {
-                                                docs.loadExperience(selection.toggle(facet.key, value))
-                                            }
-                                        },
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    if (selection.isActive) {
-                        Text(
-                            text = stringResource(R.string.experience_filter_clear),
-                            style = SeuType.Subheadline,
-                            color = SeuTheme.colors.accent,
-                            modifier = Modifier
-                                .clip(CircleShape)
-                                // 触控区补到 48dp 高，避免只有文字那点高度可点。
-                                .clickable { scope.launch { docs.loadExperience(ExperienceSelection()) } }
-                                .padding(horizontal = 16.dp, vertical = 14.dp),
-                        )
-                    }
-                }
-            }
-            if (docs.experience.isEmpty() && !docs.experienceLoading) {
-                item {
-                    EmptyStateView(
-                        title = stringResource(R.string.experience_filter_empty),
-                        description = stringResource(R.string.experience_filter_empty_desc),
-                        icon = { EmptyIcon("line.3.horizontal.decrease.circle") },
-                        topPadding = 48.dp,
+                    ExperienceTab.Following -> ForumFollowingList(
+                        store = forumStore,
+                        isLoggedIn = isLoggedIn,
+                        onLogin = onLogin,
+                        onOpenPost = onOpenPost,
+                        onOpenTopic = onOpenTopic,
                     )
-                }
-            }
-            items(docs.experience, key = { it.slug }) { entry ->
-                DocEntryCard(entry = entry, onClick = { onOpenEntry(entry.slug) })
-            }
-        }
-        }
-    }
-}
 
-/** 东大生存手册 —— 真实文档树，按「篇」分组。 */
-@Composable
-private fun HandbookTree(
-    docs: DocsStore,
-    onOpenPart: (String) -> Unit,
-    onOpenEntry: (String) -> Unit,
-) {
-    val context = LocalContext.current
-    ExperienceState(docs) {
-        if (docs.handbook.isEmpty() && !docs.handbookLoading) {
-            EmptyStateView(
-                title = stringResource(R.string.experience_handbook_unavailable),
-                description = docs.handbookError?.format(context) ?: stringResource(R.string.experience_handbook_retry),
-                icon = { EmptyIcon("book") },
-                topPadding = 64.dp,
-            )
-        } else {
-            LazyColumn(
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = ListBottomPadding),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                items(docs.handbook, key = { it.key }) { part ->
-                    HandbookPartCard(
-                        part = part,
-                        onOpenPart = { onOpenPart(part.key) },
-                        onOpenEntry = onOpenEntry,
+                    ExperienceTab.Handbook -> HandbookHomeTab(
+                        store = forumStore,
+                        onOpenSection = onOpenHandbookSection,
                     )
                 }
             }
         }
     }
 }
-
-@Composable
-private fun HandbookPartCard(
-    part: DocPart,
-    onOpenPart: () -> Unit,
-    onOpenEntry: (String) -> Unit,
-) {
-    Column(Modifier.cardStyle(padding = 14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(CircleShape)
-                .clickable(onClick = onOpenPart)
-                .padding(vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(part.label, style = SeuType.Headline, color = SeuTheme.colors.label)
-            Text(stringResource(R.string.view_all), style = SeuType.Footnote, color = SeuTheme.colors.accent)
-            Spacer(Modifier.weight(1f))
-            Text(
-                text = stringResource(R.string.experience_count, part.entries.size),
-                style = SeuType.Footnote,
-                color = SeuTheme.colors.secondaryLabel,
-            )
-        }
-        part.groups.forEach { group ->
-            group.items.forEach { entry ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(CircleShape)
-                        .clickable { onOpenEntry(entry.slug) }
-                        // 44dp → 48dp：列表行是高频触控目标，别贴着下限。
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = entry.title,
-                        style = SeuType.Subheadline,
-                        color = SeuTheme.colors.label,
-                        modifier = Modifier.weight(1f),
-                    )
-                    entry.description?.let {
-                        Text(
-                            text = it,
-                            style = SeuType.Caption2,
-                            color = SeuTheme.colors.secondaryLabel,
-                            maxLines = 1,
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * 关注 —— 社区尚未上线，诚实空状态。
- *
- * 原来的实现是从 [tech.iflink.seuwiki.models.MockData] 里筛出「用户关注话题」的
- * 假帖子：作者、点赞数 1893、评论数 342 全是编的。论坛后端虽有完整 HTTP API，
- * 但本 App 尚未接入论坛客户端，发帖/点赞/评论/关注都调不通 —— 与其用假数据把功能装点出来，
- * 不如直接说清楚还没上线。
- */
-@Composable
-private fun FollowingComingSoon() {
-    Column(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        EmptyStateView(
-            title = stringResource(R.string.experience_coming_soon),
-            description = stringResource(R.string.experience_coming_soon_desc),
-            icon = { EmptyIcon("person.2") },
-            topPadding = 72.dp,
-        )
-    }
-}
-
-/** 加载失败时给一个可点的重试；加载中给骨架占位。 */
-@Composable
-private fun ExperienceState(docs: DocsStore, content: @Composable () -> Unit) {
-    LaunchedEffect(Unit) { docs.loadExperience() }
-    LaunchedEffect(Unit) { docs.loadHandbook() }
-    content()
-}
-
-@Composable
-private fun EmptyIcon(symbol: String) {
-    Icon(
-        imageVector = SeuIcons.of(symbol),
-        contentDescription = null,
-        tint = SeuTheme.colors.tertiaryLabel,
-        modifier = Modifier.size(40.dp),
-    )
-}
-
-/**
- * 分面筛选 chip。
- *
- * 选中态用**品牌深色文字**而不是白字：`#34D6AB` 的亮绿底压白字对比度只有
- * 1.83:1，远低于 WCAG AA 的 4.5:1。深色下改用 `#00382B`（对亮绿 7.08:1）。
- */
-@Composable
-private fun FacetChip(text: String, selected: Boolean, onClick: () -> Unit) {
-    val colors = SeuTheme.colors
-    Text(
-        text = text,
-        style = SeuType.Subheadline,
-        color = if (selected) colors.onAccentInverted else colors.label,
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(if (selected) colors.accent else colors.secondaryGroupedBackground)
-            .selectableChip(selected = selected, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 10.dp),
-    )
-}
-
-/** chip 的选中语义 + 按下反馈：图标/文字之外，读屏也能知道「已选中」。 */
-private fun Modifier.selectableChip(selected: Boolean, onClick: () -> Unit): Modifier =
-    this
-        .semantics { this.selected = selected }
-        .clickable(onClick = onClick)
-
-/** 经验长文条目卡：标题 + 描述 + 篇/分类。 */
-@Composable
-fun DocEntryCard(entry: DocEntry, onClick: () -> Unit) {
-    // cardStyle 内部已经做了 clip + background，并且自带 onClick。
-    // 不要再额外挂 .clip(CircleShape)：那会把 20pt 圆角卡片按「短边半径」
-    // 裁成透镜形，左右两侧的内容直接被切掉（标题会缺头几个字）。
-    Column(
-        modifier = Modifier.cardStyle(padding = 14.dp, onClick = onClick),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(entry.title, style = SeuType.Headline, color = SeuTheme.colors.label)
-        entry.description?.let {
-            Text(
-                text = it,
-                style = SeuType.Subheadline,
-                color = SeuTheme.colors.secondaryLabel,
-                maxLines = 3,
-            )
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOfNotNull(entry.part, entry.category, entry.author).take(3).forEach {
-                Text(
-                    text = it,
-                    style = SeuType.Caption2,
-                    color = SeuTheme.colors.tertiaryLabel,
-                )
-            }
-        }
-    }
-}
-
-/** 切换某个分面的选中态：点已选中的取消，点新的替换同分面的旧值。 */
-private fun ExperienceSelection.toggle(key: String, value: String): ExperienceSelection =
-    when (key) {
-        "category" -> copy(category = if (category == value) null else value)
-        "grade" -> copy(grade = if (grade == value) null else value)
-        "college" -> copy(college = if (college == value) null else value)
-        else -> this
-    }

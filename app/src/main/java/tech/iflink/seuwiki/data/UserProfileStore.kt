@@ -300,3 +300,13 @@ class UserProfileStore(
         persistence.writeStringSet(prefs, KEY_BOOKMARKS, bookmarkedSlugs)
     }
 }
+
+/**
+ * 收藏条目的兜底显示标题：取 slug 的最后一段（`survival/观点篇/1-认识` → `1-认识`）。
+ *
+ * 收藏只存 slug。手册/经验长文索引随旧 `/api/site/docs` 信源移除后没有索引可以
+ * 回填标题，最后一段是 slug 里信息量最大的一部分，比整串 slug 或「未命名」诚实。
+ * 抽成顶层纯函数，方便自检直接打到（见 SelfCheckTest）。
+ */
+fun bookmarkDisplayTitle(slug: String): String =
+    slug.substringAfterLast('/').ifBlank { slug }

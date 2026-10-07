@@ -10,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tech.iflink.seuwiki.data.ForumApiClient.ForumApiException
+import tech.iflink.seuwiki.models.FollowedTag
 import tech.iflink.seuwiki.models.ForumBookmarkPage
 import tech.iflink.seuwiki.models.ForumBookmarkedPost
 import tech.iflink.seuwiki.models.ForumComment
@@ -18,6 +19,10 @@ import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumSort
 import tech.iflink.seuwiki.models.ForumTargetType
 import tech.iflink.seuwiki.models.ForumViewer
+import tech.iflink.seuwiki.models.HandbookArticle
+import tech.iflink.seuwiki.models.HandbookSectionInfo
+import tech.iflink.seuwiki.models.HandbookSectionPage
+import tech.iflink.seuwiki.models.SuggestedTopic
 
 /**
  * 论坛状态容器。
@@ -45,10 +50,11 @@ class ForumStore(
             }
     }
 
-    /** 帖子列表的加载态。 */
+    /** 帖子列表的加载态。[nextOffset] 仅热榜使用（offset 分页），与 nextCursor 互斥。 */
     data class ListState(
         val posts: List<ForumPost> = emptyList(),
         val nextCursor: String? = null,
+        val nextOffset: Int? = null,
         val isLoading: Boolean = false,
         val isLoadingMore: Boolean = false,
         val hasLoaded: Boolean = false,
@@ -57,7 +63,10 @@ class ForumStore(
         /** 需要登录才能做、但当前未登录。UI 据此引导登录，而不是报网络错误。 */
         val needsLogin: Boolean = false,
         val errorMessage: String? = null,
-    )
+    ) {
+        /** 还有没有下一页：游标或 offset 任一非空。 */
+        val hasMore: Boolean get() = nextCursor != null || nextOffset != null
+    }
 
     /** 帖子详情的加载态。 */
     data class DetailState(
@@ -107,6 +116,42 @@ class ForumStore(
 
     private val _bookmarks = mutableStateOf(BookmarkState())
     val bookmarks: BookmarkState get() = _bookmarks.value
+
+    /** 热榜（sort=hot，置顶优先）。独立于 [_list]：它是 offset 分页，游标体系不同。 */
+    private val _hot = mutableStateOf(ListState())
+    val hot: ListState get() = _hot.value
+
+    /** 关注流（/api/feed/following，需登录）。 */
+    private val _following = mutableStateOf(ListState())
+    val following: ListState get() = _following.value
+
+    /** 我关注的板块标签。空 ≠ 未加载，用 [followsLoaded] 区分。 */
+    private val _followedTags = mutableStateOf<List<FollowedTag>>(emptyList())
+    val followedTags: List<FollowedTag> get() = _followedTags.value
+
+    /** 零关注时服务端下发的推荐主题（slug/name/post_count）。 */
+    private val _suggestedTags = mutableStateOf<List<SuggestedTopic>>(emptyList())
+    val suggestedTags: List<SuggestedTopic> get() = _suggestedTags.value
+
+    private val _followsLoaded = mutableStateOf(false)
+    val followsLoaded: Boolean get() = _followsLoaded.value
+
+    // 手册
+    private val _handbookSections = mutableStateOf<List<HandbookSectionInfo>?>(null)
+    val handbookSections: List<HandbookSectionInfo>? get() = _handbookSections.value
+
+    private val _handbookLoading = mutableStateOf(false)
+    val handbookLoading: Boolean get() = _handbookLoading.value
+
+    private val _handbookError = mutableStateOf<String?>(null)
+    val handbookError: String? get() = _handbookError.value
+
+    /** 板块详情缓存：从列表进详情再返回，不该整页重新转圈。 */
+    private val handbookSectionCache = mutableMapOf<String, HandbookSectionPage>()
+    private val handbookArticleCache = mutableMapOf<String, HandbookArticle>()
+
+    private var hotGeneration = 0
+    private var followingGeneration = 0
 
     private var currentSort = ForumSort.Latest
     private var currentTag: String? = null
@@ -183,6 +228,224 @@ class ForumStore(
     /** 当前是否处于话题视图（决定「查看全部」之类的入口该不该出现）。 */
     fun isFilteringByTag(): Boolean = currentTag != null
 
+    // MARK: - 热榜（sort=hot，offset 分页）
+
+    fun loadHotIfNeeded() {
+        if (_hot.value.hasLoaded || _hot.value.isLoading) return
+        refreshHot()
+    }
+
+    fun refreshHot() {
+        hotGeneration++
+        _hot.value = _hot.value.copy(isLoading = true, isOffline = false, errorMessage = null)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.posts(ForumSort.Hot) } }
+                .onSuccess { page ->
+                    _hot.value = ListState(
+                        posts = page.posts,
+                        nextOffset = page.nextOffset,
+                        hasLoaded = true,
+                    )
+                }
+                .onFailure { e ->
+                    _hot.value = _hot.value.copy(
+                        isLoading = false,
+                        hasLoaded = true,
+                        isOffline = true,
+                        errorMessage = describe(e),
+                    )
+                }
+        }
+    }
+
+    /** 热榜翻页：传 offset 而不是游标（对 hot 传 cursor 后端 400）。 */
+    fun loadMoreHot() {
+        val state = _hot.value
+        if (state.isLoading || state.isLoadingMore) return
+        val offset = state.nextOffset ?: return
+        val genAtStart = hotGeneration
+        _hot.value = state.copy(isLoadingMore = true)
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { client.posts(ForumSort.Hot, offset = offset) }
+            }
+                .onSuccess { page ->
+                    if (genAtStart != hotGeneration) return@onSuccess
+                    val current = _hot.value
+                    _hot.value = current.copy(
+                        posts = (current.posts + page.posts).distinctBy { it.id },
+                        nextOffset = page.nextOffset,
+                        isLoadingMore = false,
+                    )
+                }
+                .onFailure { e ->
+                    if (genAtStart != hotGeneration) return@onFailure
+                    _hot.value = _hot.value.copy(
+                        isLoadingMore = false,
+                        isOffline = true,
+                        errorMessage = describe(e),
+                    )
+                }
+        }
+    }
+
+    // MARK: - 关注（/api/follows + /api/feed/following）
+
+    /** 拉取我关注的板块标签。401 时不算错误 —— 未登录就是没有关注。 */
+    fun loadFollows() {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.followedTags() } }
+                .onSuccess { tags ->
+                    _followedTags.value = tags
+                    _followsLoaded.value = true
+                }
+                .onFailure { e ->
+                    _followsLoaded.value = true
+                    if ((e as? ForumApiException)?.isUnauthorized == true) {
+                        _followedTags.value = emptyList()
+                    }
+                }
+        }
+    }
+
+    fun isFollowingTag(slug: String): Boolean = _followedTags.value.any { it.slug == slug }
+
+    /**
+     * 关注/取关 toggle：**先改本地再发请求**（与 toggleLike 同理），失败回滚。
+     * 成功后顺手刷新关注流，让新关注板块的帖子进来。
+     */
+    fun toggleFollowTag(slug: String) {
+        val before = _followedTags.value
+        val nowOn = before.none { it.slug == slug }
+        _followedTags.value = if (nowOn) {
+            before + FollowedTag(slug = slug, name = slug, topicSlug = null)
+        } else {
+            before.filterNot { it.slug == slug }
+        }
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.toggleFollowTag(slug) } }
+                .onSuccess { followed ->
+                    if (followed == nowOn) {
+                        // 与服务端一致：刷新关注流让变化立刻可见。
+                        refreshFollowing()
+                    } else {
+                        // 本地猜反了（冷启动状态漂移），以服务端为准。
+                        if (followed) {
+                            _followedTags.value = _followedTags.value +
+                                FollowedTag(slug = slug, name = slug, topicSlug = null)
+                        } else {
+                            _followedTags.value = _followedTags.value.filterNot { it.slug == slug }
+                        }
+                        refreshFollowing()
+                    }
+                }
+                .onFailure { e ->
+                    _followedTags.value = before
+                    _toast.value = if ((e as? ForumApiException)?.isUnauthorized == true) {
+                        "登录后才能关注"
+                    } else {
+                        describe(e)
+                    }
+                }
+        }
+    }
+
+    fun loadFollowingIfNeeded() {
+        if (_following.value.hasLoaded || _following.value.isLoading) return
+        refreshFollowing()
+    }
+
+    /**
+     * 关注流首页。401 是**正常路径**（未登录），不是网络错误：
+     * needsLogin = true，UI 给登录引导而不是重试按钮。
+     */
+    fun refreshFollowing() {
+        followingGeneration++
+        _following.value = _following.value.copy(
+            isLoading = true, isOffline = false, needsLogin = false, errorMessage = null,
+        )
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.followingFeed() } }
+                .onSuccess { page ->
+                    _following.value = ListState(
+                        posts = page.posts,
+                        nextCursor = page.nextCursor,
+                        hasLoaded = true,
+                    )
+                    if (page.suggestedTags.isNotEmpty()) _suggestedTags.value = page.suggestedTags
+                }
+                .onFailure { e ->
+                    val unauthorized = (e as? ForumApiException)?.isUnauthorized == true
+                    _following.value = _following.value.copy(
+                        isLoading = false,
+                        hasLoaded = true,
+                        isOffline = !unauthorized,
+                        needsLogin = unauthorized,
+                        errorMessage = if (unauthorized) null else describe(e),
+                    )
+                }
+        }
+    }
+
+    fun loadMoreFollowing() {
+        val state = _following.value
+        if (state.isLoading || state.isLoadingMore) return
+        val cursor = state.nextCursor ?: return
+        val genAtStart = followingGeneration
+        _following.value = state.copy(isLoadingMore = true)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.followingFeed(cursor) } }
+                .onSuccess { page ->
+                    if (genAtStart != followingGeneration) return@onSuccess
+                    val current = _following.value
+                    _following.value = current.copy(
+                        posts = (current.posts + page.posts).distinctBy { it.id },
+                        nextCursor = page.nextCursor,
+                        isLoadingMore = false,
+                    )
+                }
+                .onFailure { e ->
+                    if (genAtStart != followingGeneration) return@onFailure
+                    _following.value = _following.value.copy(
+                        isLoadingMore = false,
+                        isOffline = true,
+                        errorMessage = describe(e),
+                    )
+                }
+        }
+    }
+
+    // MARK: - 手册
+
+    fun loadHandbookSections(force: Boolean = false) {
+        if (_handbookLoading.value) return
+        if (_handbookSections.value != null && !force) return
+        _handbookLoading.value = true
+        _handbookError.value = null
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.handbookSections() } }
+                .onSuccess { _handbookSections.value = it }
+                .onFailure { e -> _handbookError.value = describe(e) }
+            _handbookLoading.value = false
+        }
+    }
+
+    /** 板块详情（含文章列表），按 slug 缓存。失败抛出由页面显示错误态。 */
+    suspend fun handbookSection(slug: String): HandbookSectionPage {
+        handbookSectionCache[slug]?.let { return it }
+        val page = withContext(Dispatchers.IO) { client.handbookSection(slug) }
+        handbookSectionCache[slug] = page
+        return page
+    }
+
+    /** 文章详情，按 id 缓存。 */
+    suspend fun handbookArticle(id: String): HandbookArticle {
+        handbookArticleCache[id]?.let { return it }
+        val article = withContext(Dispatchers.IO) { client.handbookArticle(id) }
+        handbookArticleCache[id] = article
+        return article
+    }
+
     // MARK: - 详情
 
     fun loadDetail(postId: String) {
@@ -212,6 +475,14 @@ class ForumStore(
                 isLoading = false,
                 hasLoaded = true,
             )
+            // 浏览计数 +1：匿名也可调，**失败静默**（client 内部已吞掉异常返回 null），
+            // 拿到服务端权威值就更新详情里的数字。
+            val views = withContext(Dispatchers.IO) { client.incrementView(postId) }
+            if (views != null) {
+                _detail.value.post?.takeIf { it.id == postId }?.let { current ->
+                    _detail.value = _detail.value.copy(post = current.copy(viewsCount = views))
+                }
+            }
         }
     }
 
@@ -310,7 +581,7 @@ class ForumStore(
             runCatching { withContext(Dispatchers.IO) { client.createPost(title, body, tags) } }
                 .onSuccess { id ->
                     _toast.value = "发布成功"
-                    refresh()
+                    invalidateFeeds()
                     onCreated(id)
                 }
                 .onFailure { e ->
@@ -322,6 +593,13 @@ class ForumStore(
                     }
                 }
         }
+    }
+
+    /** 发帖后让三条信息流都作废重拉：新帖该出现在最新与热榜里。 */
+    fun invalidateFeeds() {
+        refresh()
+        refreshHot()
+        if (_following.value.hasLoaded) refreshFollowing()
     }
 
     fun deleteContent(type: ForumTargetType, id: String, onDone: () -> Unit) {
@@ -413,14 +691,21 @@ class ForumStore(
     private fun findPost(id: String): ForumPost? =
         _detail.value.post?.takeIf { it.id == id }
             ?: _list.value.posts.firstOrNull { it.id == id }
+            ?: _hot.value.posts.firstOrNull { it.id == id }
+            ?: _following.value.posts.firstOrNull { it.id == id }
 
     private fun applyPost(updated: ForumPost) {
         _detail.value = _detail.value.post
             ?.let { if (it.id == updated.id) _detail.value.copy(post = updated) else _detail.value }
             ?: _detail.value
-        val list = _list.value
-        if (list.posts.none { it.id == updated.id }) return
-        _list.value = list.copy(posts = list.posts.map { if (it.id == updated.id) updated else it })
+        listOf(_list, _hot, _following).forEach { state ->
+            val value = state.value
+            if (value.posts.any { it.id == updated.id }) {
+                state.value = value.copy(
+                    posts = value.posts.map { if (it.id == updated.id) updated else it },
+                )
+            }
+        }
     }
 
     /**

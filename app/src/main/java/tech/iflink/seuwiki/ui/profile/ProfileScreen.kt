@@ -63,10 +63,7 @@ import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.rows.InitialsAvatar
-import tech.iflink.seuwiki.data.DocsStore
-import tech.iflink.seuwiki.data.resolveBookmarks
-import tech.iflink.seuwiki.models.DocEntry
-import androidx.compose.runtime.LaunchedEffect
+import tech.iflink.seuwiki.data.bookmarkDisplayTitle
 
 /**
  * 「我的画像」可选项, ported from the iOS `PersonaOptions`.
@@ -105,7 +102,6 @@ private object PersonaOptions {
 fun ProfileScreen(
     profile: UserProfileStore,
     auth: AuthStore,
-    docs: DocsStore,
     onOpenEntry: (String) -> Unit,
     onOpenForumBookmarks: () -> Unit,
     onBack: () -> Unit,
@@ -144,7 +140,7 @@ fun ProfileScreen(
                 }
                 item(key = "topics") { FollowedTopicsSection(profile) }
                 item(key = "bookmarks") {
-                    BookmarksSection(profile = profile, docs = docs, onOpenEntry = onOpenEntry)
+                    BookmarksSection(profile = profile, onOpenEntry = onOpenEntry)
                 }
                 item(key = "forum_bookmarks") {
                     ForumBookmarksRow(onClick = onOpenForumBookmarks)
@@ -791,31 +787,20 @@ private fun ReminderRow(reminder: CampusReminder) {
 /**
  * 我的收藏 — 对应 iOS `BookmarksSection`。
  *
- * 收藏**只存 slug**，标题要从索引回填：存一份标题快照的话，内容改名后会
- * 长期显示一个对不上的旧名字。
- *
- * 手册与经验两个索引都拉一次（[DocsStore.findAnyEntry] 跨索引查），
- * **都没命中就如实跳过、不渲染空行** —— 一行没有标题的条目比不显示更糟，
- * 用户只会以为 App 出错了。
+ * 收藏**只存 slug**。手册/经验长文索引随旧文档信源一并移除后，标题不再从
+ * 索引回填，而是用 [bookmarkDisplayTitle] 取 slug 的最后一段兜底显示 ——
+ * 一行兜底标题（如「1-认识」）比空白行或「加载失败」诚实得多。
  */
 @Composable
 private fun BookmarksSection(
     profile: UserProfileStore,
-    docs: DocsStore,
     onOpenEntry: (String) -> Unit,
 ) {
     val colors = SeuTheme.colors
-
-    LaunchedEffect(profile.bookmarkedSlugs) {
-        if (profile.bookmarkedSlugs.isEmpty()) return@LaunchedEffect
-        docs.loadHandbook()
-        docs.loadExperience()
-    }
-
-    // handbook / experience 是 observable state，把它们当 remember 的 key 就是在
-    // 订阅它们 —— 索引加载完这一段会自动重算（DocsStore 的 version 是私有的）。
-    val resolved = remember(profile.bookmarkedSlugs, docs.handbook, docs.experience) {
-        resolveBookmarks(profile.bookmarkedSlugs, docs::findAnyEntry)
+    val resolved = remember(profile.bookmarkedSlugs) {
+        profile.bookmarkedSlugs
+            .map { it to bookmarkDisplayTitle(it) }
+            .sortedBy { it.second }
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -830,9 +815,9 @@ private fun BookmarksSection(
             }
         } else {
             CardColumn(padding = 0.dp) {
-                resolved.forEachIndexed { index, entry ->
+                resolved.forEachIndexed { index, (slug, title) ->
                     if (index > 0) InsetDivider()
-                    BookmarkRow(entry = entry, onClick = { onOpenEntry(entry.slug) })
+                    BookmarkRow(title = title, onClick = { onOpenEntry(slug) })
                 }
             }
         }
@@ -840,7 +825,7 @@ private fun BookmarksSection(
 }
 
 @Composable
-private fun BookmarkRow(entry: DocEntry, onClick: () -> Unit) {
+private fun BookmarkRow(title: String, onClick: () -> Unit) {
     val colors = SeuTheme.colors
     Row(
         modifier = Modifier
@@ -861,27 +846,14 @@ private fun BookmarkRow(entry: DocEntry, onClick: () -> Unit) {
             },
             tint = colors.accent,
         )
-        Column(
+        Text(
+            text = title,
+            style = SeuType.SubheadlineMedium,
+            color = colors.label,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Text(
-                text = entry.title,
-                style = SeuType.SubheadlineMedium,
-                color = colors.label,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (!entry.description.isNullOrEmpty()) {
-                Text(
-                    text = entry.description,
-                    style = SeuType.Caption,
-                    color = colors.secondaryLabel,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
+        )
     }
 }
 

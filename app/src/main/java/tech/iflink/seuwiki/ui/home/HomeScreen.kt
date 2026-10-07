@@ -32,10 +32,11 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import tech.iflink.seuwiki.R
-import tech.iflink.seuwiki.data.DocsStore
 import tech.iflink.seuwiki.data.FeedStore
+import tech.iflink.seuwiki.data.ForumStore
 import tech.iflink.seuwiki.data.UserProfileStore
 import tech.iflink.seuwiki.data.toFeedProfile
+import tech.iflink.seuwiki.design.IconWell
 import tech.iflink.seuwiki.design.InsetDivider
 import tech.iflink.seuwiki.design.SectionHeader
 import tech.iflink.seuwiki.design.SeuIcons
@@ -45,36 +46,35 @@ import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.CampusReminder
 import tech.iflink.seuwiki.models.Course
 import tech.iflink.seuwiki.models.FeedItem
-import tech.iflink.seuwiki.models.DocEntry
+import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.feed.FeedScope
 import tech.iflink.seuwiki.ui.rows.FeedRow
-import tech.iflink.seuwiki.ui.rows.DocRow
 import androidx.compose.ui.platform.LocalDensity
 
 /**
  * 主页.
  *
  * Port of `HomeView`: a two-up bento row (reminder countdown + next course),
- * then the 「与我有关的通知」 and 「论坛新帖」 sections, each capped at three rows
+ * then the 「与我有关的通知」 and 「社区热议」 sections, each capped at three rows
  * behind a header that opens the full list.
  *
- * The feed section reads the for-you page and falls back to the mock selection,
- * which is what the SwiftUI `feedItems` computed property does while the store
- * has not loaded.
+ * 通知区读「为你精选」第一页；社区热议区读论坛热榜（`GET /api/posts?sort=hot`），
+ * 与 iOS `HomeView` 的 `HomePostRow` 区块一致。早期这一栏渲染过
+ * `MockData.forumPosts`（虚构作者、虚构互动数），社区接通后一律用真实数据。
  */
 @Composable
 fun HomeScreen(
     profile: UserProfileStore,
     feedStore: FeedStore,
-    docs: DocsStore,
+    forumStore: ForumStore,
     onOpenProfile: () -> Unit,
     onOpenFeedList: () -> Unit,
-    onOpenExperienceList: () -> Unit,
+    onOpenForumList: () -> Unit,
     onOpenFeed: (String) -> Unit,
-    onOpenEntry: (String) -> Unit,
+    onOpenPost: (String) -> Unit,
 ) {
     // 通知区用「为你精选」的第一页，与 SwiftUI 的 HomeView.feedItems 同源；
     // 该 scope 未加载过时会自动触发一次请求。
@@ -84,10 +84,9 @@ fun HomeScreen(
     LaunchedEffect(Unit) { feedStore.loadIfNeeded(FeedScope.ForYou, feedProfile) }
     val feedItems = feedStore.page(FeedScope.ForYou).items
 
-    // 第二块改为真实的经验长文。原来这里渲染 `MockData.forumPosts` ——
-    // 虚构作者与虚构互动数，社区接不通就不该拿假帖子占位。
-    LaunchedEffect(Unit) { docs.loadExperience() }
-    val experience = remember(docs.experience) { docs.experience.take(3) }
+    // 社区热议：论坛热榜前三条（热榜内部置顶优先，与经验 tab「热门」同源）。
+    LaunchedEffect(Unit) { forumStore.loadHotIfNeeded() }
+    val hot = forumStore.hot
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
@@ -105,8 +104,8 @@ fun HomeScreen(
                 item(key = "feed") {
                     FeedSection(feedItems, onOpenFeedList, onOpenFeed)
                 }
-                item(key = "experience") {
-                    ExperienceSection(experience, onOpenExperienceList, onOpenEntry)
+                item(key = "forum") {
+                    ForumSection(hot, onOpenForumList, onOpenPost)
                 }
             }
         }
@@ -288,19 +287,114 @@ private fun FeedSection(
     }
 }
 
+/**
+ * 社区热议区：论坛热榜前三条，「查看全部」进完整热榜。
+ *
+ * 对齐 iOS `HomePostRow`：左侧 36pt 橙色圆盘图标（置顶帖用 `pin.fill`，
+ * 否则对话气泡），标题两行，说明行是「作者 · N 赞 · N 评论」。
+ * 加载中 / 离线 / 空三种非常态在卡内如实说明，不拿假帖子占位。
+ */
 @Composable
-private fun ExperienceSection(
-    entries: List<DocEntry>,
+private fun ForumSection(
+    page: ForumStore.ListState,
     onOpenList: () -> Unit,
-    onOpenEntry: (String) -> Unit,
+    onOpenPost: (String) -> Unit,
 ) {
+    val colors = SeuTheme.colors
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        SectionHeader(title = stringResource(R.string.home_section_experience), onAction = onOpenList)
+        SectionHeader(title = stringResource(R.string.home_section_forum), onAction = onOpenList)
         Column(Modifier.cardStyle(padding = 0.dp)) {
-            entries.forEachIndexed { index, entry ->
-                DocRow(entry = entry, onClick = { onOpenEntry(entry.slug) })
-                if (index < entries.size - 1) InsetDivider()
+            when {
+                !page.hasLoaded -> Text(
+                    text = stringResource(R.string.home_forum_loading),
+                    style = SeuType.Caption,
+                    color = colors.secondaryLabel,
+                    modifier = Modifier.padding(14.dp),
+                )
+
+                page.isOffline && page.posts.isEmpty() -> Column(
+                    Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.home_forum_failed),
+                        style = SeuType.SubheadlineMedium,
+                        color = colors.label,
+                    )
+                    page.errorMessage?.let {
+                        Text(it, style = SeuType.Caption, color = colors.tertiaryLabel)
+                    }
+                }
+
+                page.posts.isEmpty() -> Column(
+                    Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.home_forum_empty_title),
+                        style = SeuType.SubheadlineMedium,
+                        color = colors.label,
+                    )
+                    Text(
+                        text = stringResource(R.string.home_forum_empty_desc),
+                        style = SeuType.Caption,
+                        color = colors.secondaryLabel,
+                    )
+                }
+
+                else -> {
+                    val shown = page.posts.take(3)
+                    shown.forEachIndexed { index, post ->
+                        HomePostRow(post = post, onClick = { onOpenPost(post.id) })
+                        if (index < shown.size - 1) InsetDivider(leading = 60.dp)
+                    }
+                }
             }
+        }
+    }
+}
+
+/** 热榜行（`HomePostRow`）：圆盘图标 + 标题 + 作者·赞·评论。 */
+@Composable
+private fun HomePostRow(post: ForumPost, onClick: () -> Unit) {
+    val colors = SeuTheme.colors
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .cardStyle(padding = 0.dp, onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        IconWell(tint = colors.orange, size = 36.dp) {
+            Icon(
+                imageVector = SeuIcons.of(
+                    if (post.isPinned) "pin.fill" else "bubble.left.and.text.bubble.right",
+                ),
+                contentDescription = null,
+                tint = colors.orange,
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            Text(
+                text = post.title?.takeIf { it.isNotBlank() } ?: post.content,
+                style = SeuType.SubheadlineMedium,
+                color = colors.label,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = listOfNotNull(
+                    post.author?.nameOrFallback,
+                    "${post.likesCount} 赞",
+                    "${post.commentsCount} 评论",
+                ).joinToString(" · "),
+                style = SeuType.Caption,
+                color = colors.secondaryLabel,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

@@ -13,8 +13,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
@@ -40,10 +38,8 @@ import tech.iflink.seuwiki.data.campusHtmlToAnnotatedString
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
-import tech.iflink.seuwiki.models.DocPart
 import tech.iflink.seuwiki.ui.DetailHeader
 import tech.iflink.seuwiki.ui.EmptyStateView
-import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.openExternalUrl
 import androidx.compose.foundation.shape.CircleShape
@@ -213,109 +209,6 @@ private fun DocDetailBody(
                     .clip(RoundedCornerShape(10.dp))
                     .clickable { onOpenExternal(url) }
                     .padding(vertical = 14.dp),
-            )
-        }
-    }
-}
-
-/**
- * 生存手册的「篇」。
- *
- * 按服务端给的真实层级展示：篇 → 组 → 条，不再是本地编出来的 6 个扁平章节。
- */
-@Composable
-fun HandbookPartScreen(
-    docs: DocsStore,
-    partKey: String,
-    onBack: () -> Unit,
-    onOpenEntry: (String) -> Unit,
-) {
-    val colors = SeuTheme.colors
-    LaunchedEffect(Unit) { docs.loadHandbook() }
-    val context = LocalContext.current
-
-    val part: DocPart? = docs.handbook.firstOrNull { it.key == partKey }
-
-    TabPage {
-        Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = part?.label ?: stringResource(R.string.doc_title_handbook), onBack = onBack)
-            if (part == null) {
-                EmptyStateView(
-                    title = stringResource(R.string.doc_not_found),
-                    description = docs.handbookError?.format(context) ?: stringResource(R.string.doc_handbook_stale),
-                    icon = {
-                        Icon(
-                            SeuIcons.of("book"),
-                            contentDescription = null,
-                            tint = colors.tertiaryLabel,
-                            modifier = Modifier.size(40.dp),
-                        )
-                    },
-                )
-            } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(
-                        start = 16.dp,
-                        end = 16.dp,
-                        top = 8.dp,
-                        bottom = ListBottomPadding,
-                    ),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    items(part.entries, key = { it.slug }) { entry ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable { onOpenEntry(entry.slug) }
-                                // 补到 48dp 触控高度。
-                                .padding(vertical = 12.dp, horizontal = 4.dp),
-                            verticalArrangement = Arrangement.spacedBy(3.dp),
-                        ) {
-                            Text(entry.title, style = SeuType.Headline, color = colors.label)
-                            entry.description?.let {
-                                Text(
-                                    text = it,
-                                    style = SeuType.Subheadline,
-                                    color = colors.secondaryLabel,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * 社区入口的统一说明页。
- *
- * 论坛后端已有完整 HTTP API（34 个路由）并已部署，但本 App 还没有论坛客户端，
- * 所以发帖、点赞、评论、关注一律调不通。与其拿编造的帖子正文、虚构用户
- * （「林晚舟」等）和虚构互动数（1893 赞 / 342 评论）把功能装点出来，
- * 不如如实说明还没上线。
- */
-@Composable
-fun CommunityComingSoonScreen(onBack: () -> Unit) {
-    val colors = SeuTheme.colors
-    TabPage {
-        Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = stringResource(R.string.doc_community_title), onBack = onBack)
-            EmptyStateView(
-                title = stringResource(R.string.doc_community_soon),
-                description = stringResource(R.string.doc_community_soon_desc),
-                icon = {
-                    Icon(
-                        SeuIcons.of("person.2"),
-                        contentDescription = null,
-                        tint = colors.tertiaryLabel,
-                        modifier = Modifier.size(40.dp),
-                    )
-                },
-                topPadding = 80.dp,
             )
         }
     }

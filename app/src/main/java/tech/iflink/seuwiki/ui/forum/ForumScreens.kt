@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -45,6 +47,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
@@ -53,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import tech.iflink.seuwiki.data.ForumApiClient
 import tech.iflink.seuwiki.data.ForumStore
 import tech.iflink.seuwiki.design.CardColumn
+import tech.iflink.seuwiki.design.IconWell
 import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
@@ -61,8 +65,11 @@ import tech.iflink.seuwiki.design.VSpace
 import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumSort
+import tech.iflink.seuwiki.models.SuggestedTopic
+import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.ui.DetailHeader
 import tech.iflink.seuwiki.ui.EmptyStateView
+import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.LoadingView
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.ScreenHeader
@@ -204,6 +211,345 @@ fun ForumPostList(
 }
 
 /**
+ * 热榜（`GET /api/posts?sort=hot`，置顶优先）。
+ *
+ * 与 [ForumPostList] 的差别在分页：热榜是 **offset 分页**（响应给 `next_offset` /
+ * `total_count`），keyset 游标在热度分实时变化时会错位；对 hot 传 cursor 后端直接
+ * 400 `INVALID_CURSOR`。headless：外面已有页头（经验页 pager / 主页查看全部的
+ * DetailHeader），这里不叠。
+ */
+@Composable
+fun ForumHotList(
+    store: ForumStore,
+    modifier: Modifier = Modifier,
+    onOpenPost: (String) -> Unit,
+    onOpenTopic: ((String) -> Unit)? = null,
+    onCompose: (() -> Unit)? = null,
+) {
+    val state = store.hot
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(Unit) { store.loadHotIfNeeded() }
+
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val total = listState.layoutInfo.totalItemsCount
+            total > 0 && last >= total - 3
+        }
+    }
+    LaunchedEffect(shouldLoadMore, state.nextOffset) {
+        if (shouldLoadMore && state.nextOffset != null) store.loadMoreHot()
+    }
+
+    val colors = SeuTheme.colors
+    TabPage {
+    Box(modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            when {
+                state.isLoading && !state.hasLoaded -> LoadingView(topPadding = 40.dp)
+                state.posts.isEmpty() -> EmptyStateView(
+                    title = if (state.isOffline) "加载失败" else "还没有热门帖子",
+                    description = state.errorMessage ?: "论坛刚开张，去「经验」页写下第一篇分享。",
+                    icon = { ForumGlyph(icon = "flame.fill", tint = colors.tertiaryLabel) },
+                    topPadding = 40.dp,
+                )
+                else -> LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = 8.dp,
+                        bottom = ListBottomPadding,
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(state.posts, key = { it.id }) { post ->
+                        ForumPostRow(
+                            post = post,
+                            onClick = { onOpenPost(post.id) },
+                            onOpenTopic = onOpenTopic,
+                        )
+                    }
+                    if (state.isLoadingMore) {
+                        item(key = "__loading_more__") {
+                            Box(
+                                Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) { Text("加载中…", style = SeuType.Footnote, color = colors.secondaryLabel) }
+                        }
+                    }
+                }
+            }
+        }
+        ComposeFab(onCompose = onCompose)
+    }
+    }
+}
+
+/** 主页「社区热议」查看全部的落点：带页头的完整热榜。 */
+@Composable
+fun ForumHotListScreen(
+    store: ForumStore,
+    title: String,
+    onBack: () -> Unit,
+    onOpenPost: (String) -> Unit,
+    onOpenTopic: ((String) -> Unit)? = null,
+) {
+    TabPage {
+        Column(Modifier.fillMaxSize()) {
+            DetailHeader(title = title, onBack = onBack)
+            ForumHotList(store = store, onOpenPost = onOpenPost, onOpenTopic = onOpenTopic)
+        }
+    }
+}
+
+/**
+ * 关注流（`GET /api/feed/following`，需登录）。
+ *
+ * 四态，对齐 iOS `ForumFollowingFeedView`：
+ * 1. **未登录 / 401** → 登录引导。401 是正常路径（未登录），不是网络错误，
+ *    由 [ForumStore.refreshFollowing] 翻成 `needsLogin`。
+ * 2. **零关注** → 推荐板块列表，可直接点「关注」（服务端零关注时随空列表下发
+ *    `suggested_tags`；没下发时回退到本地目录的 8 个主题，slug 与后端同源）。
+ * 3. **有关注、流为空** → 已关注板块卡 + 「还没有新帖」。
+ * 4. 正常 → 已关注板块卡（点 chip 取关）+ 帖子流。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ForumFollowingList(
+    store: ForumStore,
+    isLoggedIn: Boolean,
+    onLogin: () -> Unit,
+    onOpenPost: (String) -> Unit,
+    onOpenTopic: ((String) -> Unit)? = null,
+) {
+    val state = store.following
+    val colors = SeuTheme.colors
+
+    LaunchedEffect(isLoggedIn) {
+        if (isLoggedIn) {
+            store.loadFollows()
+            store.refreshFollowing()
+        }
+    }
+
+    // 1) 未登录 / 401：登录引导，与论坛收藏页的空态同一形态。
+    if (!isLoggedIn || state.needsLogin) {
+        EmptyStateView(
+            title = "需要登录",
+            description = "登录 IF.Link 账号后，这里会聚合你关注板块的新帖。",
+            icon = { ForumGlyph(icon = "person.crop.circle", tint = colors.tertiaryLabel) },
+            topPadding = 48.dp,
+            action = {
+                Button(
+                    onClick = onLogin,
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("登录 IF.Link 账号") }
+            },
+        )
+        return
+    }
+
+    val followed = store.followedTags
+    val followedSlugs = followed.map { it.slug }.toSet()
+    val suggestions = store.suggestedTags.ifEmpty {
+        TopicCatalog.topics.map { SuggestedTopic(slug = it.slug, name = it.name, postCount = 0) }
+    }
+
+    when {
+        state.isLoading && !state.hasLoaded -> LoadingView(topPadding = 40.dp)
+
+        state.isOffline && state.posts.isEmpty() && followed.isEmpty() -> EmptyStateView(
+            title = "加载失败",
+            description = state.errorMessage,
+            icon = { ForumGlyph(icon = "wifi.exclamationmark", tint = colors.tertiaryLabel) },
+            topPadding = 48.dp,
+            action = {
+                Button(
+                    onClick = { store.refreshFollowing(); store.loadFollows() },
+                    shape = CircleShape,
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text("重试") }
+            },
+        )
+
+        // 2) 零关注：推荐板块。loadFollows 还没回来时先不给这个态（闪烁），
+        //    用 followsLoaded 区分「真的零关注」和「还没查完」。
+        store.followsLoaded && followed.isEmpty() && state.posts.isEmpty() -> LazyColumn(
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = ListBottomPadding),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item(key = "guide") {
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 32.dp, bottom = 8.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    ForumGlyph(icon = "tag", tint = colors.tertiaryLabel)
+                    Text("还没有关注任何板块", style = SeuType.Title3, color = colors.secondaryLabel)
+                    Text(
+                        "关注感兴趣的板块，相关新帖会聚合到这里。",
+                        style = SeuType.Footnote,
+                        color = colors.tertiaryLabel,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            }
+            item(key = "suggested_title") {
+                Text("推荐板块", style = SeuType.Headline, color = colors.label)
+            }
+            items(suggestions, key = { it.slug }) { topic ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .cardStyle()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    IconWell(tint = colors.accent, size = 32.dp) {
+                        Icon(
+                            imageVector = SeuIcons.of("tag"),
+                            contentDescription = null,
+                            tint = colors.accent,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(topic.name, style = SeuType.SubheadlineMedium, color = colors.label)
+                        if (topic.postCount > 0) {
+                            Text(
+                                "${topic.postCount} 篇帖子",
+                                style = SeuType.Caption,
+                                color = colors.secondaryLabel,
+                            )
+                        }
+                    }
+                    ForumChip(
+                        label = if (topic.slug in followedSlugs) "已关注" else "关注",
+                        selected = topic.slug in followedSlugs,
+                        onClick = { store.toggleFollowTag(topic.slug) },
+                    )
+                }
+            }
+        }
+
+        else -> {
+            val listState = rememberLazyListState()
+            val shouldLoadMore by remember {
+                derivedStateOf {
+                    val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                    val total = listState.layoutInfo.totalItemsCount
+                    total > 0 && last >= total - 3
+                }
+            }
+            LaunchedEffect(shouldLoadMore, state.nextCursor) {
+                if (shouldLoadMore && state.nextCursor != null) store.loadMoreFollowing()
+            }
+            LazyColumn(
+                state = listState,
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = ListBottomPadding),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                if (followed.isNotEmpty()) {
+                    item(key = "followed_tags") {
+                        Column(Modifier.fillMaxWidth().cardStyle().padding(14.dp)) {
+                            Text("我关注的板块", style = SeuType.Headline, color = colors.label)
+                            VSpace(10.dp)
+                            FlowRow(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                followed.forEach { tag ->
+                                    // 点一下取关（toggle），与 iOS FollowedTagsCard 一致。
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                        modifier = Modifier
+                                            .clip(CircleShape)
+                                            .background(colors.accent.copy(alpha = 0.12f))
+                                            .clickable { store.toggleFollowTag(tag.slug) }
+                                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                                    ) {
+                                        Icon(
+                                            imageVector = SeuIcons.of("checkmark"),
+                                            contentDescription = null,
+                                            tint = colors.accent,
+                                            modifier = Modifier.size(12.dp),
+                                        )
+                                        Text(
+                                            text = tag.name,
+                                            style = SeuType.CaptionMedium,
+                                            color = colors.accent,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if (state.posts.isEmpty()) {
+                    item(key = "empty") {
+                        Column(
+                            Modifier.fillMaxWidth().padding(top = 32.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            ForumGlyph(icon = "bubble.left.and.text.bubble.right", tint = colors.tertiaryLabel)
+                            Text("还没有新帖", style = SeuType.Title3, color = colors.secondaryLabel)
+                            Text(
+                                "你关注的板块最近没有新帖。",
+                                style = SeuType.Footnote,
+                                color = colors.tertiaryLabel,
+                            )
+                        }
+                    }
+                } else {
+                    items(state.posts, key = { it.id }) { post ->
+                        ForumPostRow(
+                            post = post,
+                            onClick = { onOpenPost(post.id) },
+                            onOpenTopic = onOpenTopic,
+                        )
+                    }
+                    if (state.isLoadingMore) {
+                        item(key = "__loading_more__") {
+                            Box(
+                                Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                contentAlignment = Alignment.Center,
+                            ) { Text("加载中…", style = SeuType.Footnote, color = colors.secondaryLabel) }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** 详情页头部的小标记（置顶 / 精选），对齐 iOS 的橙色 Label。 */
+@Composable
+private fun DetailPill(icon: String, label: String) {
+    val colors = SeuTheme.colors
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Icon(
+            imageVector = SeuIcons.of(icon),
+            contentDescription = null,
+            tint = colors.orange,
+            modifier = Modifier.size(12.dp),
+        )
+        Text(label, style = SeuType.CaptionMedium, color = colors.orange)
+    }
+}
+
+/**
  * 右下角发帖按钮。
  *
  * 国内社区 App 的通行做法；iOS 那侧用 toolbar 按钮，属平台机制差异
@@ -301,14 +647,20 @@ private fun ForumTagPill(text: String, onClick: (() -> Unit)? = null) {
     )
 }
 
-/** 「最新 / 热门」切换。排序值直接对应后端 `sort` 参数，写错会被判 `INVALID_SORT`。 */
+/**
+ * 话题页的「最新 / 赞最多」切换。排序值直接对应后端 `sort` 参数，写错会被判 `INVALID_SORT`。
+ *
+ * **只放 Latest / Top 两项**：热榜（[ForumSort.Hot]）是 offset 分页，与这里的
+ * keyset 游标不兼容，而且它有自己专属的入口（经验 tab 默认页）。Top 叫「赞最多」
+ * 而不是「热门」，避免和热榜的「热门」混淆（后端 top = likes_count 倒序）。
+ */
 @Composable
 private fun SortToggle(current: ForumSort, onChange: (ForumSort) -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        ForumSort.entries.forEach { option ->
+        listOf(ForumSort.Latest to "最新", ForumSort.Top to "赞最多").forEach { (option, label) ->
             val selected = option == current
             ForumChip(
-                label = if (option == ForumSort.Latest) "最新" else "热门",
+                label = label,
                 selected = selected,
                 onClick = { if (!selected) onChange(option) },
             )
@@ -317,11 +669,12 @@ private fun SortToggle(current: ForumSort, onChange: (ForumSort) -> Unit) {
 }
 
 /**
- * 一行帖子。
+ * 一行帖子。对齐 iOS `ForumPostCard`：
+ * 置顶 pill（pin.fill）→ 标题 → 摘要 → 作者 + 相对时间 + eye/heart/bubble 三个计数。
  *
- * 刻意**不显示点赞数** —— 服务端没有"我是否已点赞"的只读接口，界面上一个红心加
- * 数字会暗示"这个赞是你按的"，而那只有本地才准。要显示互动数就显示服务端的
- * `comments_count`（真实），点赞态只在详情页给。
+ * 三个计数都是服务端的反范式列（`views_count` / `likes_count` / `comments_count`），
+ * 是真实数据；只有「我是否已赞」这个状态服务端没有只读接口，所以列表里不给红心
+ * 填充态，只给数字（iOS 同）。
  *
  * [onOpenTopic] 非空时标签可点 —— 这是话题页的入口。`Routes.topicDetail` 之前只定义
  * 没人调用，整个话题页没有入口。
@@ -329,6 +682,7 @@ private fun SortToggle(current: ForumSort, onChange: (ForumSort) -> Unit) {
 @Composable
 fun ForumPostRow(post: ForumPost, onClick: () -> Unit, onOpenTopic: ((String) -> Unit)? = null) {
     val colors = SeuTheme.colors
+    val context = LocalContext.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -336,6 +690,21 @@ fun ForumPostRow(post: ForumPost, onClick: () -> Unit, onOpenTopic: ((String) ->
             .clickable(onClick = onClick)
             .padding(14.dp),
     ) {
+        if (post.isPinned) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Icon(
+                    imageVector = SeuIcons.of("pin.fill"),
+                    contentDescription = null,
+                    tint = colors.orange,
+                    modifier = Modifier.size(12.dp),
+                )
+                Text("置顶", style = SeuType.CaptionMedium, color = colors.orange)
+            }
+            VSpace(6.dp)
+        }
         post.title?.takeIf { it.isNotBlank() }?.let {
             Text(
                 text = it,
@@ -371,14 +740,19 @@ fun ForumPostRow(post: ForumPost, onClick: () -> Unit, onOpenTopic: ((String) ->
                     modifier = Modifier.width(88.dp),
                 )
             }
-            Spacer(Modifier.weight(1f))
-            if (post.commentsCount > 0) {
-                Text(
-                    text = "${post.commentsCount} 条回复",
-                    style = SeuType.Caption,
-                    color = colors.tertiaryLabel,
-                )
+            post.createdAt?.let {
+                val rel = Format.relative(context, it)
+                if (rel.isNotEmpty()) {
+                    Spacer(Modifier.width(6.dp))
+                    Text(rel, style = SeuType.Caption, color = colors.tertiaryLabel, maxLines = 1)
+                }
             }
+            Spacer(Modifier.weight(1f))
+            StatGlyph(icon = "eye", count = post.viewsCount)
+            Spacer(Modifier.width(10.dp))
+            StatGlyph(icon = "heart", count = post.likesCount)
+            Spacer(Modifier.width(10.dp))
+            StatGlyph(icon = "bubble.left", count = post.commentsCount)
         }
         if (post.tags.isNotEmpty()) {
             VSpace(8.dp)
@@ -397,6 +771,24 @@ fun ForumPostRow(post: ForumPost, onClick: () -> Unit, onOpenTopic: ((String) ->
     }
 }
 
+/** 列表卡右下角的计数：图标 + 数字（eye / heart / bubble.left），对齐 iOS statLabel。 */
+@Composable
+private fun StatGlyph(icon: String, count: Int) {
+    val colors = SeuTheme.colors
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(3.dp),
+    ) {
+        Icon(
+            imageVector = SeuIcons.of(icon),
+            contentDescription = null,
+            tint = colors.tertiaryLabel,
+            modifier = Modifier.size(11.dp),
+        )
+        Text("$count", style = SeuType.Caption, color = colors.tertiaryLabel)
+    }
+}
+
 /** 帖子详情 + 评论。 */
 @Composable
 fun ForumPostDetailScreen(
@@ -404,6 +796,7 @@ fun ForumPostDetailScreen(
     postId: String,
     onBack: () -> Unit,
     onLoginRequired: () -> Unit,
+    onOpenHandbookArticle: (String) -> Unit = {},
 ) {
     val colors = SeuTheme.colors
     val state = store.detail
@@ -436,6 +829,17 @@ fun ForumPostDetailScreen(
             ) {
                 item(key = "post") {
                     Column(Modifier.fillMaxWidth().cardStyle().padding(14.dp)) {
+                        if (post.isPinned || post.featured) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                if (post.isPinned) {
+                                    DetailPill(icon = "pin.fill", label = "置顶")
+                                }
+                                if (post.featured) {
+                                    DetailPill(icon = "star.fill", label = "精选")
+                                }
+                            }
+                            VSpace(8.dp)
+                        }
                         post.title?.takeIf { it.isNotBlank() }?.let {
                             Text(it, style = SeuType.Headline, color = colors.label)
                             VSpace(8.dp)
@@ -454,7 +858,10 @@ fun ForumPostDetailScreen(
                             }
                         }
                         VSpace(12.dp)
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
                             ForumChip(
                                 label = if (post.likedByMe) "已赞" else "赞 ${post.likesCount}",
                                 selected = post.likedByMe,
@@ -468,6 +875,54 @@ fun ForumPostDetailScreen(
                                 onClick = {
                                     if (store.viewer == null) onLoginRequired() else store.toggleBookmark(post.id)
                                 },
+                            )
+                            Spacer(Modifier.weight(1f))
+                            // 浏览数：loadDetail 内部已打过 +1（失败静默），这里显示的是
+                            // 服务端权威值，可能比列表里的大 1。
+                            StatGlyph(icon = "eye", count = post.viewsCount)
+                            Spacer(Modifier.width(10.dp))
+                            StatGlyph(icon = "bubble.left", count = post.commentsCount)
+                        }
+                    }
+                }
+
+                // 反向入口：该帖已沉淀成手册文章时给「查看手册文章」卡片。
+                post.handbookArticle?.let { article ->
+                    item(key = "handbook_article") {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .cardStyle()
+                                .clickable { onOpenHandbookArticle(article.id) }
+                                .padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            Icon(
+                                imageVector = SeuIcons.of("books.vertical.fill"),
+                                contentDescription = null,
+                                tint = colors.accent,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    "已收录进东大生存手册",
+                                    style = SeuType.Caption,
+                                    color = colors.secondaryLabel,
+                                )
+                                Text(
+                                    article.title,
+                                    style = SeuType.SubheadlineMedium,
+                                    color = colors.label,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Icon(
+                                imageVector = SeuIcons.of("chevron.right"),
+                                contentDescription = null,
+                                tint = colors.tertiaryLabel,
+                                modifier = Modifier.size(14.dp),
                             )
                         }
                     }

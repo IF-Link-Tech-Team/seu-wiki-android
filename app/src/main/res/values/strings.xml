@@ -65,7 +65,12 @@
     <string name="home_empty_class">今天没课了</string>
     <string name="home_empty_class_hint">去工具页查看完整课表</string>
     <string name="home_section_related_feed">与我有关的通知</string>
-    <string name="home_section_experience">经验长文</string>
+    <!-- 「社区热议」：论坛热榜（sort=hot，置顶优先）前 3 条。措辞对齐 iOS HomeForumSection。 -->
+    <string name="home_section_forum">社区热议</string>
+    <string name="home_forum_loading">正在加载社区热议…</string>
+    <string name="home_forum_failed">社区内容加载失败</string>
+    <string name="home_forum_empty_title">论坛刚开张</string>
+    <string name="home_forum_empty_desc">还没有帖子，去「经验」页写下第一篇分享。</string>
     <string name="days_left">%1$d 天</string>
     <string name="today">今天</string>
 
@@ -129,33 +134,30 @@
 
     <!-- ============ 经验 ============ -->
     <string name="experience_title">经验</string>
-    <string name="experience_empty">还没有经验长文</string>
-    <string name="experience_empty_desc">「社区」功能即将上线，经验长文会持续补充。</string>
-    <string name="experience_filter_title">按场景、年级、学院筛选</string>
-    <string name="experience_filter_clear">清除筛选</string>
-    <string name="experience_filter_empty">这个组合下暂时没有内容</string>
-    <string name="experience_filter_empty_desc">换一个场景或年级再看看。</string>
-    <string name="experience_handbook_unavailable">生存手册加载中或暂时不可用</string>
-    <string name="experience_handbook_retry">下拉或重新进入即可重试。</string>
-    <string name="experience_count">%1$d 条</string>
-    <string name="experience_coming_soon">社区功能即将上线</string>
-    <string name="experience_coming_soon_desc">关注、发帖、点赞与评论正在开发中。\n现在可以先逛逛「热门」和「东大生存手册」。</string>
 
-    <!-- 经验子页 console -->
+    <!-- 经验子页 console：热门（论坛热榜）/ 关注（关注流）/ 东大生存手册 -->
     <string name="experience_tab_hot">热门</string>
-    <string name="experience_tab_topics">话题</string>
-    <string name="experience_tab_handbook">生存手册</string>
+    <string name="experience_tab_handbook">东大生存手册</string>
     <string name="experience_tab_following">关注</string>
 
-    <!-- ============ 文档 / 手册 ============ -->
-    <string name="doc_kind_survival">生存手册</string>
-    <string name="doc_kind_experience">经验</string>
+    <!-- 东大生存手册（forum.seu.wiki /api/handbook/*）。措辞对齐 iOS HandbookViews。 -->
+    <string name="handbook_load_failed">手册加载失败</string>
+    <string name="handbook_empty">还没有手册文章</string>
+    <string name="handbook_empty_desc">编辑团队会从社区讨论里持续沉淀内容。</string>
+    <string name="handbook_articles_count">%1$d 篇文章</string>
+    <string name="handbook_child_count">%1$s · %2$d</string>
+    <string name="handbook_section_discussion">查看该板块讨论</string>
+    <string name="handbook_section_empty">这个板块还没有文章</string>
+    <string name="handbook_section_empty_desc">相关讨论沉淀成文章后会出现在这里。</string>
+    <string name="handbook_article_title">东大生存手册</string>
+    <string name="handbook_no_body">这篇文章暂时没有正文。</string>
+    <string name="handbook_source_post">查看原帖讨论</string>
+    <string name="handbook_source_post_fallback">原帖</string>
+    <string name="handbook_source_post_stats">%1$d 赞 · %2$d 评论</string>
+
+    <!-- ============ 文档详情（旧文档深链，本地收藏仍用） ============ -->
     <string name="doc_title">手册</string>
-    <string name="doc_title_handbook">生存手册</string>
     <string name="doc_load_failed">加载失败：%1$s</string>
-    <string name="docs_handbook_failed">生存手册加载失败：%1$s</string>
-    <string name="docs_experience_failed">经验加载失败：%1$s</string>
-    <string name="docs_search_failed">搜索失败：%1$s</string>
     <string name="doc_network_error">网络异常</string>
     <string name="doc_load_error_title">这条内容没能加载出来</string>
     <string name="doc_jump_to_section">从搜索定位到本节：%1$s</string>
@@ -163,19 +165,12 @@
     <string name="doc_body">正文</string>
     <string name="doc_no_body">这条内容暂时没有正文。</string>
     <string name="doc_view_original">查看原文 →</string>
-    <string name="doc_not_found">没有找到这一篇</string>
-    <string name="doc_handbook_stale">手册目录可能已经更新，返回重进试试。</string>
-    <string name="doc_community_title">社区</string>
-    <string name="doc_community_soon">社区功能即将上线</string>
-    <string name="doc_community_soon_desc">发帖、点赞、评论与关注正在开发中。\n现在可以先逛「资讯」「经验」和「东大生存手册」。</string>
 
-    <!-- ============ 列表页（与我有关系 / 经验长文 / 搜索结果） ============ -->
+    <!-- ============ 列表页（与我有关系 / 搜索结果） ============ -->
     <string name="list_related_title">与我有关</string>
-    <string name="list_experience_title">经验长文</string>
     <string name="list_search_failed">搜索失败</string>
     <string name="list_unknown_scope">未知搜索范围：%1$s</string>
     <string name="list_hit_section">命中本节：%1$s</string>
-    <string name="section_entry_count">%1$d 篇条目</string>
     <string name="row_featured">精选</string>
 
     <!-- ============ 搜索 ============ -->
@@ -185,10 +180,12 @@
     <string name="search_scope_forum">经验</string>
     <string name="search_scope_handbook">手册</string>
     <string name="search_scope_feed_desc">教务、奖助、竞赛、招聘等校园资讯</string>
-    <string name="search_scope_forum_desc">保研、考研、留学、实习等经验帖</string>
-    <string name="search_scope_handbook_desc">入学、选课、奖助、生活等手册条目</string>
+    <string name="search_scope_forum_desc">论坛里的经验帖与讨论</string>
+    <string name="search_scope_handbook_desc">东大生存手册的沉淀文章</string>
     <string name="search_failed">搜索失败</string>
     <string name="search_failed_desc">%1$s\n检查网络后再试一次。</string>
+    <string name="search_feed_failed">通知搜索失败：%1$s</string>
+    <string name="search_forum_failed">帖子与手册搜索失败：%1$s</string>
     <string name="search_retry">重试</string>
     <string name="search_not_found">未找到“%1$s”</string>
     <string name="search_not_found_desc">换个关键词试试，试试「保研」「转专业」这类词。</string>
@@ -413,13 +410,13 @@
     <string name="reset_confirm_title">恢复默认设置？</string>
     <string name="reset_confirm_message">学院、学段、年级、兴趣标签、课表和已设的提醒都会清空，这一项撤不回来。</string>
 
-    <!-- 收藏（对齐 iOS：只存 slug，标题从索引回填） -->
+    <!-- 收藏（对齐 iOS：只存 slug，标题用 slug 末段兜底） -->
     <string name="bookmark_add">收藏</string>
     <string name="bookmark_remove">取消收藏</string>
     <string name="profile_section_bookmarks">我的收藏</string>
     <string name="profile_section_forum_bookmarks">论坛收藏</string>
     <string name="profile_forum_bookmarks">我收藏的帖子</string>
-    <string name="profile_empty_bookmarks">暂无收藏，在手册或经验详情页点右上角收藏后会出现在这里</string>
+    <string name="profile_empty_bookmarks">暂无收藏，在手册条目详情页点右上角收藏后会出现在这里</string>
 
     <!-- 画像里的长列表选择器（学院 28 项） -->
     <string name="profile_picker_search_hint">搜索</string>

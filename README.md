@@ -51,9 +51,16 @@ app/src/main/java/tech/iflink/seuwiki/
 
 ### 1. 生产路径不许有 Mock
 
-资讯、手册、经验长文、统一搜索全部接 `seu-wiki-v2` 线上接口。后端没返回的字段
+资讯走 `seu.wiki` 的 `/api/site/*`；社区（帖子、热榜、关注流、东大生存手册、论坛搜索）
+全部接论坛后端 **`https://forum.seu.wiki`**，与 App 登录共用同一个 Logto 会话
+（`Authorization: Bearer`，不存在第二次登录）。后端没返回的字段
 （`campus` / `audience` / `deadline`）就**不编造默认值**，对应筛选项显式置灰。
 未接通的功能显式标注「即将推出」或直接隐藏。
+
+早期的 `/api/site/docs/survival`（手册文档树）与 `/api/site/docs/experience`
+（经验长文）信源已随社区接通移除：手册改走论坛的 `/api/handbook/` 系列接口，
+经验长文整体由论坛经验帖取代。`DocsStore` 只剩旧文档条目的详情缓存
+（收藏与深链仍会按 slug 打开它们）。
 
 ### 2. 平台机制不跨端模仿
 
@@ -95,11 +102,15 @@ iOS 用 SwiftUI 原生控件，本端用 Material 原生控件 —— 同一个�
 
 ## 自检
 
-`app/src/test/java/tech/iflink/seuwiki/SelfCheckTest.kt`，39 条断言，**每一条都真的打生产代码**。
+`app/src/test/java/tech/iflink/seuwiki/SelfCheckTest.kt`，75 条用例，**每一条都真的打生产代码**。
 
-它抓到过几个代码审查看不出来的 bug：日期解析（后端混用带时刻与只有日期两种格式）、
-分页合并去重、HTML 实体与段落粘连、slug 的 `%2F` 编码（不编码直接 404）、
+它抓到过几个代码审查看不出来的 bug：日期解析（后端混用带时刻、只有日期、6 位微秒
+三种格式）、分页合并去重、HTML 实体与段落粘连、slug 的 `%2F` 编码（不编码直接 404）、
 对比度（品牌亮绿上压白字只有 1.83:1）。
+
+论坛链路有一组**本地 HTTP 回放**断言：真的起 socket 服务器，真的把 `Authorization`
+头写出去，真的解析 JSON —— 钉住 Bearer 免登录链路、hot 的 offset 分页（不许带 cursor）、
+浏览计数失败静默、关注 body 白名单、401 识别成未登录、手册与搜索两桶解析。
 
 有一条断言值得单独说：它扫全量源码，把所有传给 `SeuIcons.of(...)` 的字面量抠出来
 跟映射表比对。`SeuIcons.of` 找不到名字会**静默返回 `Icons.Outlined.Apps`（九宫格）** ——

@@ -40,12 +40,8 @@ import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.design.TintPill
 import tech.iflink.seuwiki.design.cardStyle
-import tech.iflink.seuwiki.design.forumSolidTint
 import tech.iflink.seuwiki.design.mixWith
 import tech.iflink.seuwiki.models.FeedItem
-import tech.iflink.seuwiki.models.DocEntry
-import tech.iflink.seuwiki.models.DocKind
-import tech.iflink.seuwiki.models.HandbookSection
 import tech.iflink.seuwiki.ui.Format
 
 /** Click affordance applied only when a handler is supplied. */
@@ -308,62 +304,6 @@ fun FeedItemCard(
 
 
 /**
- * 经验 · 生存手册 node row.
- *
- * Port of `HandbookNodeCell`: a 36dp solid-tint circle glyph, the section name
- * and its entry count, with a hairline inset past the icon gutter.
- */
-@Composable
-fun HandbookNodeCell(
-    section: HandbookSection,
-    showsDivider: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
-) {
-    val colors = SeuTheme.colors
-    val tint = forumSolidTint(section.id)
-    Column(modifier = modifier.fillMaxWidth().maybeClick(onClick)) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(tint),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = SeuIcons.of(section.iconKey),
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(19.dp),
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = section.name,
-                    style = SeuType.SubheadlineMedium,
-                    color = colors.label,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = stringResource(R.string.section_entry_count, section.entries.size),
-                    style = SeuType.Caption,
-                    color = colors.secondaryLabel,
-                )
-            }
-        }
-        if (showsDivider) InsetDivider(leading = 58.dp)
-    }
-}
-
-/**
  * 首字头像。给登录用户与各种占位主体用，按名字首字母取色。
  *
  * 原名 `ForumAvatar` 是因为最早只有论坛在用；社区接不通之后它只剩个人页在用，
@@ -390,70 +330,6 @@ fun InitialsAvatar(name: String, modifier: Modifier = Modifier, size: Dp = 36.dp
         )
     }
 }
-
-/**
- * 手册 / 经验条目行。
- *
- * 用于主页「经验长文」与其它紧凑列表：一行标题 + 一行来源信息，
- * 左边一个品牌色圆点做信源标识。整行可点，触控区满 48dp。
- */
-@Composable
-fun DocRow(
-    entry: DocEntry,
-    modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
-) {
-    val colors = SeuTheme.colors
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .maybeClick(onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(36.dp)
-                .clip(CircleShape)
-                .background(if (entry.kind == DocKind.Experience) colors.orange else colors.green),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = SeuIcons.of(
-                    if (entry.kind == DocKind.Experience) {
-                        "bubble.left.and.text.bubble.right.fill"
-                    } else {
-                        "book.closed.fill"
-                    },
-                ),
-                contentDescription = null,
-                tint = colors.onAccentInverted,
-                modifier = Modifier.size(18.dp),
-            )
-        }
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = entry.title,
-                style = SeuType.SubheadlineMedium,
-                color = colors.label,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
-            entry.description?.let {
-                Text(
-                    text = it,
-                    style = SeuType.Caption,
-                    color = colors.secondaryLabel,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-    }
-}
-
-
 
 /** Saturated two-stop gradient used by Tools cards (white-mixed top, black-mixed bottom). */
 fun toolGradientColors(tint: Color): List<Color> =

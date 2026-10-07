@@ -8,6 +8,8 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.add
+import tech.iflink.seuwiki.models.FollowedTag
+import tech.iflink.seuwiki.models.FollowingFeedPage
 import tech.iflink.seuwiki.models.ForumAuthor
 import tech.iflink.seuwiki.models.ForumComment
 import tech.iflink.seuwiki.models.ForumBookmarkPage
@@ -16,10 +18,21 @@ import tech.iflink.seuwiki.models.ForumCommentsPage
 import tech.iflink.seuwiki.models.ForumImage
 import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumPostPage
+import tech.iflink.seuwiki.models.ForumSearchArticle
+import tech.iflink.seuwiki.models.ForumSearchPost
+import tech.iflink.seuwiki.models.ForumSearchResults
 import tech.iflink.seuwiki.models.ForumSort
 import tech.iflink.seuwiki.models.ForumTag
 import tech.iflink.seuwiki.models.ForumTargetType
 import tech.iflink.seuwiki.models.ForumViewer
+import tech.iflink.seuwiki.models.HandbookArticle
+import tech.iflink.seuwiki.models.HandbookArticleRef
+import tech.iflink.seuwiki.models.HandbookArticleSummary
+import tech.iflink.seuwiki.models.HandbookChild
+import tech.iflink.seuwiki.models.HandbookSectionInfo
+import tech.iflink.seuwiki.models.HandbookSectionPage
+import tech.iflink.seuwiki.models.HandbookSourcePost
+import tech.iflink.seuwiki.models.SuggestedTopic
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
@@ -81,19 +94,25 @@ class ForumApiClient(
     // MARK: - 读
 
     /**
-     * `GET /api/posts?sort=&limit=&tag=&cursor=` —— 公开帖子列表，**匿名可读**。
+     * `GET /api/posts?sort=&limit=&tag=&cursor=&offset=` —— 公开帖子列表，**匿名可读**。
      *
      * [cursor] 必须原样回传后端给的 `next_cursor`，不要解析也不要自己拼。
      * 切换 [sort] 时必须丢弃旧游标：后端游标里编码了排序语义，跨 sort 复用直接
      * 400 `INVALID_CURSOR`（`src/lib/api/public-read.ts:75-87`）。
      *
+     * **热榜（[ForumSort.Hot]）用 [offset] 而不是 cursor**：热度分随互动实时变化，
+     * keyset 会错位，所以热榜响应给 `total_count` / `next_offset`
+     * （`posts/route.ts` 的 hot 分支）。对 hot 传 cursor 会被判 400 `INVALID_CURSOR`。
+     *
      * @param tag 话题 slug。**未收录的 slug 返回 200 + 空数组**，不是 404。
+     *   且 hot 的 tag 过滤是**精确 slug**：筛主题不会聚合子标签的帖子。
      */
     suspend fun posts(
         sort: ForumSort = ForumSort.Latest,
         tag: String? = null,
         cursor: String? = null,
         limit: Int = PageSize,
+        offset: Int? = null,
     ): ForumPostPage {
         val dto: PostsResponse = get(
             "/api/posts",
@@ -101,10 +120,20 @@ class ForumApiClient(
                 add("sort" to sort.key)
                 add("limit" to limit.coerceIn(1, 50).toString())
                 tag?.takeIf { it.isNotBlank() }?.let { add("tag" to it) }
-                cursor?.takeIf { it.isNotBlank() }?.let { add("cursor" to it) }
+                if (sort == ForumSort.Hot) {
+                    // 热榜只认 offset；cursor 一个字节都不能带（带了就是 400）。
+                    offset?.takeIf { it > 0 }?.let { add("offset" to it.toString()) }
+                } else {
+                    cursor?.takeIf { it.isNotBlank() }?.let { add("cursor" to it) }
+                }
             },
         )
-        return ForumPostPage(dto.posts.map { it.toPost() }, dto.nextCursor)
+        return ForumPostPage(
+            posts = dto.posts.map { it.toPost() },
+            nextCursor = dto.nextCursor,
+            nextOffset = dto.nextOffset,
+            totalCount = dto.totalCount,
+        )
     }
 
     /**
@@ -121,8 +150,21 @@ class ForumApiClient(
         return dto.post.toPost().copy(
             bookmarked = dto.post.bookmarked ?: false,
             featured = dto.featured,
+            handbookArticle = dto.handbookArticle?.let { HandbookArticleRef(it.id, it.title) },
         )
     }
+
+    /**
+     * `POST /api/posts/{id}/view` —— 浏览计数 +1，返回服务端权威 `views`。
+     *
+     * 匿名也可调（无 body、无鉴权要求）。**失败必须静默**：浏览计数是锦上添花，
+     * 绝不能因为这一发失败让详情页显示错误 —— 调用方（ForumStore）用
+     * `runCatching` 包住，拿到 null 就保持详情接口给的旧值。
+     */
+    suspend fun incrementView(id: String): Int? = runCatching {
+        val dto: ViewResponse = send("POST", "/api/posts/${encode(id)}/view", null)
+        dto.views
+    }.getOrNull()
 
     /**
      * `GET /api/comments?target_type=post&target_id=` —— 评论列表，**匿名可读**。
@@ -298,6 +340,134 @@ class ForumApiClient(
         )
     }
 
+    // MARK: - 东大生存手册（匿名可读）
+
+    /** `GET /api/handbook/sections` —— 手册板块列表（主题 + 子标签 + 文章数）。 */
+    suspend fun handbookSections(): List<HandbookSectionInfo> {
+        val dto: HandbookSectionsResponse = get("/api/handbook/sections", emptyList())
+        return dto.sections.map { it.toSectionInfo() }
+    }
+
+    /**
+     * `GET /api/handbook/sections/{slug}` —— 板块详情 + 文章列表（published_at 倒序）。
+     *
+     * slug 未收录时后端返 404 `SECTION_NOT_FOUND`，异常原样抛出由上层显示空态。
+     */
+    suspend fun handbookSection(slug: String): HandbookSectionPage {
+        val dto: HandbookSectionResponse = get("/api/handbook/sections/${encode(slug)}", emptyList())
+        return HandbookSectionPage(
+            type = dto.section.type,
+            slug = dto.section.slug,
+            name = dto.section.name ?: dto.section.slug,
+            parentSlug = dto.section.parentSlug,
+            children = dto.section.children.map { HandbookChild(it.slug, it.name, it.articleCount ?: 0) },
+            articles = dto.articles.map { it.toSummary() },
+        )
+    }
+
+    /**
+     * `GET /api/handbook/articles/{id}` —— 文章详情。
+     *
+     * [HandbookArticle.contentHtml] 是服务端消毒过的 HTML，直接进
+     * `campusHtmlToAnnotatedString` 渲染管线。
+     */
+    suspend fun handbookArticle(id: String): HandbookArticle {
+        val dto: HandbookArticleResponse = get("/api/handbook/articles/${encode(id)}", emptyList())
+        val a = dto.article
+        return HandbookArticle(
+            id = a.id,
+            tagSlug = a.tagSlug,
+            title = a.title,
+            authorDisplay = a.authorDisplay?.takeIf { it.isNotBlank() },
+            contentHtml = a.contentHtml.orEmpty(),
+            publishedAt = parseIso8601(a.publishedAt),
+            updatedAt = parseIso8601(a.updatedAt),
+            sourcePost = a.sourcePost?.let { sp ->
+                HandbookSourcePost(
+                    id = sp.id,
+                    title = sp.title,
+                    likesCount = sp.likesCount,
+                    commentsCount = sp.commentsCount,
+                    viewsCount = sp.viewsCount,
+                    author = sp.author?.toAuthor(),
+                )
+            },
+        )
+    }
+
+    // MARK: - 关注（需登录）
+
+    /**
+     * `GET /api/follows?target_type=tag` —— 本人关注的板块标签，**需登录**（401 未登录）。
+     *
+     * 目录固定不分页（响应的 `next_cursor` 恒为 null）。
+     */
+    suspend fun followedTags(): List<FollowedTag> {
+        val dto: FollowsResponse = get("/api/follows", listOf("target_type" to "tag"))
+        return dto.follows.map {
+            FollowedTag(slug = it.tagSlug, name = it.tagName, topicSlug = it.topicSlug)
+        }
+    }
+
+    /**
+     * `POST /api/follows` —— 关注/取关 toggle，返回**切换后**的 `followed`。
+     *
+     * Body 是严格白名单 `{target_type, target_id}`，多一个 key 就 400
+     * （`lib/follows/create-input.mjs`）。tag 的 target_id 是 slug。
+     */
+    suspend fun toggleFollowTag(slug: String): Boolean {
+        val body = buildJsonObject {
+            put("target_type", "tag")
+            put("target_id", slug)
+        }
+        val dto: FollowedResponse = send("POST", "/api/follows", body)
+        return dto.followed
+    }
+
+    /**
+     * `GET /api/feed/following` —— 关注流，**需登录**（401 未登录）。
+     *
+     * keyset 分页，游标约定与 `/api/posts` latest 一致。零关注时 posts 为空且
+     * 下发 `suggested_tags`（对象数组：slug/name/post_count），供关注引导。
+     */
+    suspend fun followingFeed(cursor: String? = null, limit: Int = PageSize): FollowingFeedPage {
+        val dto: FollowingFeedResponse = get(
+            "/api/feed/following",
+            buildList {
+                add("limit" to limit.coerceIn(1, 50).toString())
+                cursor?.takeIf { it.isNotBlank() }?.let { add("cursor" to it) }
+            },
+        )
+        return FollowingFeedPage(
+            posts = dto.posts.map { it.toPost() },
+            nextCursor = dto.nextCursor,
+            suggestedTags = dto.suggestedTags.map {
+                SuggestedTopic(slug = it.slug, name = it.name, postCount = it.postCount)
+            },
+        )
+    }
+
+    // MARK: - 搜索（匿名可读）
+
+    /**
+     * `GET /api/search?q=&type=all` —— 论坛统一搜索：帖子 + 手册文章两组同返。
+     *
+     * 空关键词后端直接 400 `EMPTY_QUERY`，调用方（SearchStore）在 trim 后为空时
+     * 不该发请求。两组各带 scope 游标，续翻哪一组回传哪一组的 next_cursor。
+     */
+    suspend fun search(query: String, limit: Int = PageSize): ForumSearchResults {
+        val dto: ForumSearchResponse = get(
+            "/api/search",
+            listOf("q" to query, "type" to "all", "limit" to limit.coerceIn(1, 50).toString()),
+        )
+        return ForumSearchResults(
+            posts = dto.posts?.items.orEmpty().map { it.toSearchPost() },
+            postsNextCursor = dto.posts?.nextCursor,
+            articles = dto.articles?.items.orEmpty().map { it.toSearchArticle() },
+            articlesNextCursor = dto.articles?.nextCursor,
+        )
+    }
+
     // MARK: - Plumbing
 
     private suspend inline fun <reified T> get(
@@ -452,6 +622,8 @@ private data class PostDto(
     val created_at: String? = null,
     val likes_count: Int = 0,
     val comments_count: Int = 0,
+    val views_count: Int = 0,
+    val pinned_at: String? = null,
     val author: AuthorDto? = null,
     val images: List<ImageDto> = emptyList(),
     val tags: List<TagDto> = emptyList(),
@@ -463,13 +635,27 @@ private data class PostsResponse(
     val posts: List<PostDto> = emptyList(),
     /** 游标原样回传，不要解析（后端在游标里编码了排序语义）。 */
     @SerialName("next_cursor") val nextCursor: String? = null,
+    /** 仅热榜（sort=hot）：offset 分页。 */
+    @SerialName("next_offset") val nextOffset: Int? = null,
+    @SerialName("total_count") val totalCount: Int? = null,
+)
+
+@Serializable
+private data class HandbookArticleLinkDto(
+    val id: String,
+    val title: String = "",
 )
 
 @Serializable
 private data class PostDetailResponse(
     val post: PostDto,
     val featured: Boolean = false,
+    /** 该帖沉淀出的手册文章（最新一篇）；没有时为 null。 */
+    @SerialName("handbook_article") val handbookArticle: HandbookArticleLinkDto? = null,
 )
+
+@Serializable
+private data class ViewResponse(val views: Int = 0)
 
 @Serializable
 private data class CommentDto(
@@ -563,6 +749,148 @@ private data class BookmarksResponse(
     @SerialName("next_cursor") val nextCursor: String? = null,
 )
 
+// MARK: - DTO：手册 / 关注 / 搜索
+
+@Serializable
+private data class HandbookChildDto(
+    val slug: String,
+    val name: String,
+    /** 板块列表接口给；板块详情接口的 children 没有这个字段。 */
+    @SerialName("article_count") val articleCount: Int? = null,
+)
+
+@Serializable
+private data class HandbookSectionDto(
+    val slug: String,
+    val name: String? = null,
+    /** "topic"（含 children）或 "tag"（含 parent_slug）。 */
+    val type: String = "topic",
+    @SerialName("article_count") val articleCount: Int? = null,
+    @SerialName("parent_slug") val parentSlug: String? = null,
+    val children: List<HandbookChildDto> = emptyList(),
+)
+
+@Serializable
+private data class HandbookSectionsResponse(
+    val sections: List<HandbookSectionDto> = emptyList(),
+)
+
+@Serializable
+private data class HandbookSectionResponse(
+    val section: HandbookSectionDto,
+    val articles: List<HandbookArticleSummaryDto> = emptyList(),
+)
+
+@Serializable
+private data class HandbookArticleSummaryDto(
+    val id: String,
+    @SerialName("tag_slug") val tagSlug: String,
+    val title: String,
+    @SerialName("author_display") val authorDisplay: String? = null,
+    @SerialName("published_at") val publishedAt: String? = null,
+    @SerialName("source_post") val sourcePost: HandbookArticleLinkDto? = null,
+)
+
+@Serializable
+private data class HandbookArticleResponse(
+    val article: HandbookArticleDto,
+)
+
+@Serializable
+private data class HandbookArticleDto(
+    val id: String,
+    @SerialName("tag_slug") val tagSlug: String,
+    val title: String,
+    @SerialName("author_display") val authorDisplay: String? = null,
+    @SerialName("content_html") val contentHtml: String? = null,
+    @SerialName("published_at") val publishedAt: String? = null,
+    @SerialName("updated_at") val updatedAt: String? = null,
+    @SerialName("source_post") val sourcePost: HandbookSourcePostDto? = null,
+)
+
+@Serializable
+private data class HandbookSourcePostDto(
+    val id: String,
+    val title: String? = null,
+    @SerialName("likes_count") val likesCount: Int = 0,
+    @SerialName("comments_count") val commentsCount: Int = 0,
+    @SerialName("views_count") val viewsCount: Int = 0,
+    val author: AuthorDto? = null,
+)
+
+@Serializable
+private data class FollowDto(
+    @SerialName("tag_slug") val tagSlug: String,
+    @SerialName("tag_name") val tagName: String,
+    @SerialName("topic_slug") val topicSlug: String? = null,
+)
+
+@Serializable
+private data class FollowsResponse(
+    val follows: List<FollowDto> = emptyList(),
+    /** tag 关注目录固定不分页，恒为 null。 */
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+private data class FollowedResponse(val followed: Boolean = false)
+
+@Serializable
+private data class SuggestedTopicDto(
+    val slug: String,
+    val name: String,
+    @SerialName("post_count") val postCount: Int = 0,
+)
+
+@Serializable
+private data class FollowingFeedResponse(
+    val posts: List<PostDto> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+    /** 仅零关注时下发；是对象数组，不是字符串数组。 */
+    @SerialName("suggested_tags") val suggestedTags: List<SuggestedTopicDto> = emptyList(),
+)
+
+@Serializable
+private data class SearchPostDto(
+    val id: String,
+    val title: String? = null,
+    val snippet: String = "",
+    val author: AuthorDto? = null,
+    @SerialName("likes_count") val likesCount: Int = 0,
+    @SerialName("comments_count") val commentsCount: Int = 0,
+    @SerialName("views_count") val viewsCount: Int = 0,
+    @SerialName("created_at") val createdAt: String? = null,
+)
+
+@Serializable
+private data class SearchArticleDto(
+    val id: String,
+    val title: String,
+    val snippet: String = "",
+    @SerialName("tag_slug") val tagSlug: String,
+    @SerialName("published_at") val publishedAt: String? = null,
+    @SerialName("source_post_id") val sourcePostId: String? = null,
+)
+
+@Serializable
+private data class SearchPostGroupDto(
+    val items: List<SearchPostDto> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+@Serializable
+private data class SearchArticleGroupDto(
+    val items: List<SearchArticleDto> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
+
+/** type=all 时两组同返；游标带 scope，续翻哪组回传哪组。 */
+@Serializable
+private data class ForumSearchResponse(
+    val posts: SearchPostGroupDto? = null,
+    val articles: SearchArticleGroupDto? = null,
+)
+
 // MARK: - DTO → model
 
 private fun AuthorDto.toAuthor() = ForumAuthor(
@@ -580,10 +908,49 @@ private fun PostDto.toPost() = ForumPost(
     createdAt = parseIso8601(created_at),
     likesCount = likes_count,
     commentsCount = comments_count,
+    viewsCount = views_count,
+    pinnedAt = parseIso8601(pinned_at),
     author = author?.toAuthor(),
     images = images.map { ForumImage(it.id, it.asset_url, it.mime_type, it.sort_order) },
     tags = tags.map { ForumTag(it.id, it.name, it.slug) },
     bookmarked = bookmarked ?: false,
+)
+
+private fun HandbookSectionDto.toSectionInfo() = HandbookSectionInfo(
+    slug = slug,
+    // name 缺失时退回 slug：板块名在 TopicCatalog 能补，但那属于 UI 层的选择。
+    name = name ?: slug,
+    articleCount = articleCount ?: 0,
+    children = children.map { HandbookChild(it.slug, it.name, it.articleCount ?: 0) },
+)
+
+private fun HandbookArticleSummaryDto.toSummary() = HandbookArticleSummary(
+    id = id,
+    tagSlug = tagSlug,
+    title = title,
+    authorDisplay = authorDisplay?.takeIf { it.isNotBlank() },
+    publishedAt = parseIso8601(publishedAt),
+    sourcePost = sourcePost?.let { HandbookArticleRef(it.id, it.title) },
+)
+
+private fun SearchPostDto.toSearchPost() = ForumSearchPost(
+    id = id,
+    title = title,
+    snippet = snippet,
+    author = author?.toAuthor(),
+    likesCount = likesCount,
+    commentsCount = commentsCount,
+    viewsCount = viewsCount,
+    createdAt = parseIso8601(createdAt),
+)
+
+private fun SearchArticleDto.toSearchArticle() = ForumSearchArticle(
+    id = id,
+    title = title,
+    snippet = snippet,
+    tagSlug = tagSlug,
+    publishedAt = parseIso8601(publishedAt),
+    sourcePostId = sourcePostId,
 )
 
 private fun ViewerDto.toViewer() = ForumViewer(

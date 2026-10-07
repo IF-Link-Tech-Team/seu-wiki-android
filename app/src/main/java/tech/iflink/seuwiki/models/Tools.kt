@@ -92,22 +92,6 @@ data class ToolItem(
     val isAvailable: Boolean = false,
 )
 
-/** A handbook document node: section → entries. */
-data class HandbookSection(
-    val id: String,
-    val name: String,
-    val iconKey: String,
-    val entries: List<HandbookEntry>,
-)
-
-data class HandbookEntry(
-    val id: String,
-    val title: String,
-    val subtitle: String,
-    val body: String,
-    val updatedAt: Long,
-)
-
 /**
  * 工具清单。
  *

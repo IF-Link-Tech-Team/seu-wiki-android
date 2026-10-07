@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,7 +31,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -59,10 +57,9 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import tech.iflink.seuwiki.R
-import tech.iflink.seuwiki.data.DocsStore
+import tech.iflink.seuwiki.data.SearchStore
 import tech.iflink.seuwiki.design.CardColumn
 import tech.iflink.seuwiki.design.ConsoleBar
-import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.IconWell
 import tech.iflink.seuwiki.design.InsetDivider
 import tech.iflink.seuwiki.design.SeuColorScheme
@@ -71,9 +68,11 @@ import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.FeedItem
-import tech.iflink.seuwiki.models.DocKind
-import tech.iflink.seuwiki.models.DocRef
+import tech.iflink.seuwiki.models.ForumSearchArticle
+import tech.iflink.seuwiki.models.ForumSearchPost
+import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.ui.EmptyStateView
+import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.LoadingView
 import tech.iflink.seuwiki.ui.ScreenHeader
@@ -85,10 +84,10 @@ import tech.iflink.seuwiki.ui.TabPage
  * [key] 是稳定标识符：它进路由（`search/list/{scope}/{keyword}`），必须稳定且与
  * 语言无关。[labelRes] / [detailRes] 只是显示用，可以翻译。
  *
- * 原来这里把中文 label 直接当路由键用（`Routes.searchSourceList(scope.label, …)`，
- * 到了 `SearchSourceListScreen` 再 `when (scope) { "通知" -> … }` 解回来）。文案一旦
- * 抽进 strings.xml，这条路就变成「跟着设备语言走」：用户改语言后回退栈里那条路由
- * 就再也匹配不上，页面会掉进「未知搜索范围」。所以 key 和显示名必须分开。
+ * 信源映射（与 iOS `SearchScope` 一致）：
+ * - 通知 = `GET seu.wiki/api/site/pool?type=feed`
+ * - 经验 = 论坛搜索的**帖子**桶（`GET forum.seu.wiki/api/search?type=all` 的 posts）
+ * - 手册 = 论坛搜索的**手册文章**桶（同一响应的 articles）
  */
 enum class SearchScope(val key: String, @StringRes val labelRes: Int, val symbol: String) {
     All("all", R.string.search_scope_all, "magnifyingglass"),
@@ -119,36 +118,22 @@ enum class SearchScope(val key: String, @StringRes val labelRes: Int, val symbol
 }
 
 /**
- * 一次查询的三个结果桶。
+ * 搜索。
  *
- * 三信源映射（两端必须一致）：资讯卡 = pool 的 `items`；
- * 经验卡 = `docs.filter{ kind == experience }`；手册卡 = `docs.filter{ kind == survival }`。
- * 原来这里的经验桶是 `MockData.forumPosts`（虚构用户与虚构点赞数），已删除。
- */
-class SearchResults(
-    val keyword: String,
-    val feed: List<FeedItem>,
-    val experience: List<DocRef>,
-    val handbook: List<DocRef>,
-) {
-    val isEmpty: Boolean get() = feed.isEmpty() && experience.isEmpty() && handbook.isEmpty()
-}
-
-/**
- * 搜索.
+ * 信源全部来自后端真实接口，两组**并发、各自成败**（见 [SearchStore]）：
+ * 论坛不可达时通知搜索照常出结果，反之亦然。空关键词不发请求
+ * （论坛搜索对空 q 直接 400 `EMPTY_QUERY`）。
  *
- * 三个信源现在**全部来自后端**：`GET /api/site/pool` 一次响应里同时给
- * 资讯 `items` 与手册/经验 `docs`，客户端只做 kind 的映射与拆分，不再本地匹配。
- *
- * 匹配与高亮仍沿用 SwiftUI `SearchEngine` 的 containment + 加粗强调。
+ * 匹配与高亮沿用 SwiftUI `SearchEngine` 的 containment + 加粗强调。
  */
 @OptIn(FlowPreview::class)
 @Composable
 fun SearchScreen(
-    docs: DocsStore,
+    store: SearchStore,
     onOpenProfile: () -> Unit,
     onOpenFeed: (String) -> Unit,
-    onOpenEntry: (String) -> Unit,
+    onOpenPost: (String) -> Unit,
+    onOpenArticle: (id: String, title: String) -> Unit,
     onOpenSourceList: (SearchScope, String) -> Unit,
 ) {
     var keyword by rememberSaveable { mutableStateOf("") }
@@ -158,24 +143,15 @@ fun SearchScreen(
     val keyboard = LocalSoftwareKeyboardController.current
     val searchScope = rememberCoroutineScope()
 
-    val result = docs.searchResult
-    val results = SearchResults(
-        keyword = result.query,
-        feed = result.feed,
-        experience = result.experience,
-        handbook = result.handbook,
-    )
+    val result = store.state
 
-    // 300ms 防抖 + collectLatest：原来每个按键都直接发一次请求，
-    // 一边打字一边把 `/api/site/pool` 打满。collectLatest 会在新关键词到达时
-    // 取消上一个在途请求 —— 这也是 S-1 那个 bug 的引爆点，所以取消路径必须
-    // 一路保持 CancellationException、不被吞。
-    LaunchedEffect(docs) {
+    // 300ms 防抖 + collectLatest：新关键词到达时取消上一个在途请求。
+    LaunchedEffect(store) {
         snapshotFlow { keyword.trim() }
             .debounce(300)
             .distinctUntilChanged()
             .collectLatest { q ->
-                if (q.isEmpty()) docs.clearSearch() else docs.search(q)
+                if (q.isEmpty()) store.clear() else store.search(q)
             }
     }
 
@@ -197,20 +173,18 @@ fun SearchScreen(
             when {
                 keyword.isBlank() -> SearchSuggestions(
                     onSelectWord = { keyword = it },
-                    // 键盘弹出时的避让由 `ListBottomPadding` 统一处理（感知
-                    // WindowInsets.ime），这里不再叠加 imePadding，否则会顶两倍。
                     modifier = Modifier.fillMaxSize(),
                 )
 
-                // 失败与「搜不到」必须分开：前者给可重试的错误态，后者给空态。
-                // 之前两者都静默回退到本地假数据，用户根本分不清是网断了还是没命中。
-                result.error != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                // 两组信源全挂才算整体失败；只挂一组时另一组照常显示。
+                result.allFailed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
                         title = stringResource(R.string.search_failed),
                         description = stringResource(
-                        R.string.search_failed_desc,
-                        result.error?.format(context).orEmpty(),
-                    ),
+                            R.string.search_failed_desc,
+                            result.forumError?.format(context)
+                                ?: result.feedError?.format(context).orEmpty(),
+                        ),
                         icon = {
                             Icon(
                                 imageVector = SeuIcons.Search,
@@ -227,7 +201,7 @@ fun SearchScreen(
                         modifier = Modifier
                             .padding(top = 260.dp)
                             .clip(CircleShape)
-                            .clickable { searchScope.launch { docs.search(keyword.trim()) } }
+                            .clickable { searchScope.launch { store.search(keyword.trim()) } }
                             .padding(horizontal = 20.dp, vertical = 14.dp),
                     )
                 }
@@ -235,7 +209,7 @@ fun SearchScreen(
                 result.loading && result.total == 0 -> LoadingView(topPadding = 80.dp)
 
                 // 「搜过、没报错、0 命中」——这是真正的空结果。
-                results.isEmpty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+                result.isEmpty -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
                         title = stringResource(R.string.search_not_found, keyword),
                         description = stringResource(R.string.search_not_found_desc),
@@ -251,19 +225,23 @@ fun SearchScreen(
                 }
 
                 scope == SearchScope.All -> AggregatedResults(
-                    results = results,
+                    result = result,
                     keyword = keyword,
                     onOpenFeed = onOpenFeed,
-                    onOpenEntry = onOpenEntry,
+                    onOpenPost = onOpenPost,
+                    onOpenArticle = onOpenArticle,
                     onOpenSourceList = onOpenSourceList,
+                    onRetry = { searchScope.launch { store.search(keyword.trim()) } },
                 )
 
                 else -> SourceList(
                     scope = scope,
-                    results = results,
+                    result = result,
                     keyword = keyword,
                     onOpenFeed = onOpenFeed,
-                    onOpenEntry = onOpenEntry,
+                    onOpenPost = onOpenPost,
+                    onOpenArticle = onOpenArticle,
+                    onRetry = { searchScope.launch { store.search(keyword.trim()) } },
                 )
             }
         }
@@ -438,57 +416,66 @@ private fun ExplainLabel(text: String, symbol: String, tint: Color) {
 
 @Composable
 private fun AggregatedResults(
-    results: SearchResults,
+    result: SearchStore.State,
     keyword: String,
     onOpenFeed: (String) -> Unit,
-    onOpenEntry: (String) -> Unit,
+    onOpenPost: (String) -> Unit,
+    onOpenArticle: (String, String) -> Unit,
     onOpenSourceList: (SearchScope, String) -> Unit,
+    onRetry: () -> Unit,
 ) {
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = ListBottomPadding),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
-        if (results.feed.isNotEmpty()) {
+        if (result.feed.isNotEmpty()) {
             item {
                 SearchSectionCard(
                     scope = SearchScope.Feed,
-                    count = results.feed.size,
+                    count = result.feed.size,
                     onMore = { onOpenSourceList(SearchScope.Feed, keyword) },
                 ) {
-                    results.feed.take(3).forEachIndexed { index, item ->
+                    result.feed.take(3).forEachIndexed { index, item ->
                         SearchFeedResultRow(item, keyword) { onOpenFeed(item.id) }
-                        if (index < minOf(3, results.feed.size) - 1) InsetDivider()
+                        if (index < minOf(3, result.feed.size) - 1) InsetDivider()
                     }
                 }
             }
         }
-        if (results.experience.isNotEmpty()) {
+        if (result.posts.isNotEmpty()) {
             item {
                 SearchSectionCard(
                     scope = SearchScope.Forum,
-                    count = results.experience.size,
+                    count = result.posts.size,
                     onMore = { onOpenSourceList(SearchScope.Forum, keyword) },
                 ) {
-                    results.experience.take(3).forEachIndexed { index, doc ->
-                        SearchDocResultRow(doc, DocKind.Experience, keyword) { onOpenEntry(doc.slug) }
-                        if (index < minOf(3, results.experience.size) - 1) InsetDivider()
+                    result.posts.take(3).forEachIndexed { index, post ->
+                        SearchForumPostRow(post, keyword) { onOpenPost(post.id) }
+                        if (index < minOf(3, result.posts.size) - 1) InsetDivider()
                     }
                 }
             }
         }
-        if (results.handbook.isNotEmpty()) {
+        if (result.articles.isNotEmpty()) {
             item {
                 SearchSectionCard(
                     scope = SearchScope.Handbook,
-                    count = results.handbook.size,
+                    count = result.articles.size,
                     onMore = { onOpenSourceList(SearchScope.Handbook, keyword) },
                 ) {
-                    results.handbook.take(3).forEachIndexed { index, doc ->
-                        SearchDocResultRow(doc, DocKind.Survival, keyword) { onOpenEntry(doc.slug) }
-                        if (index < minOf(3, results.handbook.size) - 1) InsetDivider()
+                    result.articles.take(3).forEachIndexed { index, article ->
+                        SearchArticleRow(article, keyword) { onOpenArticle(article.id, article.title) }
+                        if (index < minOf(3, result.articles.size) - 1) InsetDivider()
                     }
                 }
             }
+        }
+        // 单组失败：该组没有可显示的结果时，给一张如实说明的小卡而不是装作没搜这一组。
+        if (result.feedError != null && result.feed.isEmpty()) {
+            item { SearchGroupErrorCard(SearchScope.Feed, result.feedError.format(LocalContext.current), onRetry) }
+        }
+        if (result.forumError != null && result.posts.isEmpty() && result.articles.isEmpty()) {
+            item { SearchGroupErrorCard(SearchScope.Forum, result.forumError.format(LocalContext.current), onRetry) }
         }
     }
 }
@@ -496,40 +483,88 @@ private fun AggregatedResults(
 /**
  * 单信源结果列表（选中「通知」/「经验」/「手册」之后）。
  *
- * **每一行都必须可点并跳到对应详情**（A-1）。原实现里 `CardColumn` 没挂
- * `onClick`，传进来的 `onOpenFeed` / `onOpenPost` / `onOpenHandbookEntry`
- * 三个回调**一个都没被用上** —— 表现为「搜索结果点不动」：列表有内容、
- * 看着像能进，点了毫无反应。
- *
- * 现在三路各自接上自己的回调，并补上关键词高亮（原来这里也没高亮）。
+ * **每一行都必须可点并跳到对应详情**：帖子行进论坛帖子详情，手册文章行进
+ * 手册文章详情，通知行进资讯详情。
  */
 @Composable
 private fun SourceList(
     scope: SearchScope,
-    results: SearchResults,
+    result: SearchStore.State,
     keyword: String,
     onOpenFeed: (String) -> Unit,
-    onOpenEntry: (String) -> Unit,
+    onOpenPost: (String) -> Unit,
+    onOpenArticle: (String, String) -> Unit,
+    onRetry: () -> Unit,
 ) {
+    val context = LocalContext.current
     LazyColumn(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = ListBottomPadding),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         when (scope) {
-            SearchScope.Feed -> items(results.feed, key = { it.id }) { item ->
-                SearchFeedResultRow(item, keyword) { onOpenFeed(item.id) }
+            SearchScope.Feed -> {
+                items(result.feed, key = { it.id }) { item ->
+                    SearchFeedResultRow(item, keyword) { onOpenFeed(item.id) }
+                }
+                if (result.feedError != null && result.feed.isEmpty()) {
+                    item { SearchGroupErrorCard(scope, result.feedError.format(context), onRetry) }
+                }
             }
 
-            SearchScope.Forum -> items(results.experience, key = { it.slug }) { doc ->
-                SearchDocResultRow(doc, DocKind.Experience, keyword) { onOpenEntry(doc.slug) }
+            SearchScope.Forum -> {
+                items(result.posts, key = { it.id }) { post ->
+                    SearchForumPostRow(post, keyword) { onOpenPost(post.id) }
+                }
+                if (result.forumError != null && result.posts.isEmpty()) {
+                    item { SearchGroupErrorCard(scope, result.forumError.format(context), onRetry) }
+                }
             }
 
-            SearchScope.Handbook -> items(results.handbook, key = { it.slug }) { doc ->
-                SearchDocResultRow(doc, DocKind.Survival, keyword) { onOpenEntry(doc.slug) }
+            SearchScope.Handbook -> {
+                items(result.articles, key = { it.id }) { article ->
+                    SearchArticleRow(article, keyword) { onOpenArticle(article.id, article.title) }
+                }
+                if (result.forumError != null && result.articles.isEmpty()) {
+                    item { SearchGroupErrorCard(scope, result.forumError.format(context), onRetry) }
+                }
             }
 
             SearchScope.All -> Unit
         }
+    }
+}
+
+/** 某一组信源失败时的如实说明卡（另一组的结果不受影响）。 */
+@Composable
+private fun SearchGroupErrorCard(scope: SearchScope, message: String, onRetry: () -> Unit) {
+    val colors = SeuTheme.colors
+    Column(Modifier.cardStyle(padding = 14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Icon(
+                imageVector = SeuIcons.of(scope.symbol),
+                contentDescription = null,
+                tint = colors.tertiaryLabel,
+                modifier = Modifier.size(15.dp),
+            )
+            Text(
+                text = stringResource(scope.labelRes),
+                style = SeuType.SubheadlineSemibold,
+                color = colors.secondaryLabel,
+            )
+        }
+        Text(message, style = SeuType.Caption, color = colors.tertiaryLabel)
+        Text(
+            text = stringResource(R.string.search_retry),
+            style = SeuType.SubheadlineSemibold,
+            color = colors.accent,
+            modifier = Modifier
+                .clip(CircleShape)
+                .clickable(onClick = onRetry)
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+        )
     }
 }
 
@@ -629,64 +664,112 @@ private fun SearchFeedResultRow(item: FeedItem, keyword: String, onClick: () -> 
 }
 
 /**
- * 手册 / 经验结果行。两者字段一致，只有图标与配色不同。
+ * 论坛搜索的帖子结果行。
  *
- * 命中正文小节时（`pool` 的 `docs[].anchor` 非空）在标题下补一行锚点提示，
- * 让用户知道点进去会落到哪一节，而不是整篇从头看。
+ * 搜索接口给的是 snippet 投影（没有 content / images / tags，见
+ * [ForumSearchPost]），标题可能为 null（无标题帖），这时拿 snippet 当主行。
  */
 @Composable
-private fun SearchDocResultRow(
-    doc: DocRef,
-    kind: DocKind,
-    keyword: String,
-    onClick: () -> Unit,
-) {
+private fun SearchForumPostRow(post: ForumSearchPost, keyword: String, onClick: () -> Unit) {
     val colors = SeuTheme.colors
-    val tint = if (kind == DocKind.Experience) colors.orange else colors.green
-    val symbol = if (kind == DocKind.Experience) {
-        "bubble.left.and.text.bubble.right.fill"
-    } else {
-        "book.closed.fill"
-    }
+    val context = LocalContext.current
     Row(
         modifier = Modifier.cardStyle(padding = 14.dp, onClick = onClick),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        IconWell(tint = tint) {
+        IconWell(tint = colors.orange) {
             Icon(
-                imageVector = SeuIcons.of(symbol),
+                imageVector = SeuIcons.of("bubble.left.and.text.bubble.right"),
                 contentDescription = null,
-                tint = tint,
+                tint = colors.orange,
+                modifier = Modifier.size(17.dp),
+            )
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+            post.title?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    text = highlightMatches(it, keyword),
+                    style = SeuType.SubheadlineMedium,
+                    color = colors.label,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (post.snippet.isNotBlank()) {
+                Text(
+                    text = highlightMatches(post.snippet, keyword),
+                    style = if (post.title.isNullOrBlank()) SeuType.SubheadlineMedium else SeuType.Caption,
+                    color = if (post.title.isNullOrBlank()) colors.label else colors.secondaryLabel,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Text(
+                text = listOfNotNull(
+                    post.author?.nameOrFallback,
+                    "${post.likesCount} 赞",
+                    "${post.commentsCount} 评论",
+                    "${post.viewsCount} 浏览",
+                    post.createdAt?.let { Format.relative(context, it) }?.takeIf { it.isNotEmpty() },
+                ).joinToString(" · "),
+                style = SeuType.Caption,
+                color = colors.tertiaryLabel,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+/**
+ * 论坛搜索的手册文章结果行。点进去是手册文章详情（`content_html` 渲染），
+ * 不是旧文档树的条目。
+ */
+@Composable
+private fun SearchArticleRow(article: ForumSearchArticle, keyword: String, onClick: () -> Unit) {
+    val colors = SeuTheme.colors
+    val context = LocalContext.current
+    Row(
+        modifier = Modifier.cardStyle(padding = 14.dp, onClick = onClick),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        IconWell(tint = colors.green) {
+            Icon(
+                imageVector = SeuIcons.of("books.vertical.fill"),
+                contentDescription = null,
+                tint = colors.green,
                 modifier = Modifier.size(17.dp),
             )
         }
         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
-                text = highlightMatches(doc.title, keyword),
+                text = highlightMatches(article.title, keyword),
                 style = SeuType.SubheadlineMedium,
                 color = colors.label,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
-            doc.anchor?.let {
+            if (article.snippet.isNotBlank()) {
                 Text(
-                    text = stringResource(R.string.list_hit_section, highlightMatches(it.text.trim(), keyword)),
+                    text = highlightMatches(article.snippet, keyword),
                     style = SeuType.Caption,
-                    color = colors.accent,
+                    color = colors.secondaryLabel,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            doc.description?.let {
-                Text(
-                    text = highlightMatches(it, keyword),
-                    style = SeuType.Caption,
-                    color = colors.secondaryLabel,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            Text(
+                text = listOfNotNull(
+                    TopicCatalog.nameForSlug(article.tagSlug),
+                    article.publishedAt?.let { Format.relative(context, it) }?.takeIf { it.isNotEmpty() },
+                ).joinToString(" · "),
+                style = SeuType.Caption,
+                color = colors.tertiaryLabel,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

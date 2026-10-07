@@ -14,10 +14,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.buildAnnotatedString
@@ -27,12 +23,14 @@ import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.design.CardColumn
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
-import tech.iflink.seuwiki.data.DocsStore
+import tech.iflink.seuwiki.data.SearchStore
 import tech.iflink.seuwiki.models.FeedItem
+import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.ui.DetailHeader
 import tech.iflink.seuwiki.ui.EmptyStateView
 import tech.iflink.seuwiki.ui.Format
 import tech.iflink.seuwiki.ui.ListBottomPadding
+import tech.iflink.seuwiki.ui.LoadingView
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.search.highlightMatches
 
@@ -62,116 +60,107 @@ fun HomeFeedListScreen(
 }
 
 /**
- * 经验长文 · 完整列表。
- *
- * 主页那一栏原来叫「论坛新帖」，内容是 `MockData.forumPosts` —— 虚构作者、
- * 虚构互动数。社区接不通之后，这一栏改为展示**真实的经验长文**
- * （`GET /api/site/docs/experience`），点进去就是对应的正文详情。
- */
-@Composable
-fun HomeExperienceListScreen(
-    docs: DocsStore,
-    onBack: () -> Unit,
-    onOpenEntry: (String) -> Unit,
-) {
-    LaunchedEffect(Unit) { docs.loadExperience() }
-    DetailListPage(title = stringResource(R.string.list_experience_title), onBack = onBack) {
-        items(docs.experience, key = { it.slug }) { entry ->
-            CompactListRow(
-                title = entry.title,
-                meta = listOfNotNull(entry.part, entry.category, entry.author)
-                    .take(2).joinToString(" · ").ifEmpty { stringResource(R.string.list_experience_title) },
-                onClick = { onOpenEntry(entry.slug) },
-            )
-        }
-    }
-}
-
-/**
  * 单信源搜索结果.
  *
  * Port of `SearchSourceListView`: the destination of a `SearchSectionCard`'s
- * 「查看更多」, and the inline form the ConsoleBar scopes reuse. [scopeKey] is a
- * `SearchScope.key` handed straight through from the route — a stable ASCII
- * identifier, never the localized display name, so a device-language change can
- * never orphan a route already sitting on the back stack.
+ * 「查看更多」. [scopeKey] is a `SearchScope.key` handed straight through from the
+ * route — a stable ASCII identifier, never the localized display name, so a
+ * device-language change can never orphan a route already sitting on the back
+ * stack.
  *
- * Each scope keeps the Swift `SearchEngine` filter, the `SearchResultRows` meta
- * line, and that row type's keyword emphasis.
+ * 数据与搜索页同一份 [SearchStore.state]：通知来自 `pool?type=feed`，经验/手册
+ * 来自论坛搜索的 posts / articles 桶。三组按 scope 分流，关键词高亮与
+ * 搜索页行内结果一致。
  */
 @Composable
 fun SearchSourceListScreen(
-    docs: DocsStore,
+    store: SearchStore,
     scopeKey: String,
     keyword: String,
     onBack: () -> Unit,
     onOpenFeed: (String) -> Unit,
-    onOpenEntry: (String) -> Unit,
+    onOpenPost: (String) -> Unit,
+    onOpenArticle: (id: String, title: String) -> Unit,
 ) {
     val context = LocalContext.current
     // 路由带进来的是 SearchScope.key（稳定的 ASCII 标识符），显示名才从资源取。
     val scope = SearchScope.fromKey(scopeKey)
     val scopeTitle = scope?.let { stringResource(it.labelRes) } ?: scopeKey
     val key = keyword.trim()
-    var error by remember(key) { mutableStateOf<String?>(null) }
 
-    // 结果直接取自 `GET /api/site/pool`：这一次请求同时给了资讯 items 与
-    // 手册/经验 docs，三信源按 label 分流，不再本地匹配假数据。
-    // 关键词已经是路由参数（A-9 修好了编码），这里不再二次编码。
+    // 关键词已经是路由参数，这里不再二次编码。与搜索页共享同一个 store：
+    // 若刚搜过同一关键词，state 里已有结果，请求会被 collectLatest 幂等覆盖。
     LaunchedEffect(key) {
-        if (key.isEmpty()) return@LaunchedEffect
-        runCatching { docs.search(key) }
-            .onSuccess { error = null }
-            .onFailure { error = it.message ?: context.getString(R.string.doc_network_error) }
+        if (key.isNotEmpty() && store.state.query != key) store.search(key)
     }
 
-    if (error != null) {
-        TabPage {
+    val result = store.state
+    val failed = when (scope) {
+        SearchScope.Feed -> result.feedError
+        SearchScope.Forum, SearchScope.Handbook -> result.forumError
+        else -> if (result.allFailed) result.forumError ?: result.feedError else null
+    }
+
+    when {
+        result.loading && result.total == 0 -> DetailListPage(title = scopeTitle, onBack = onBack) {
+            item { LoadingView(topPadding = 64.dp) }
+        }
+
+        failed != null -> TabPage {
             Column(Modifier.fillMaxSize()) {
                 DetailHeader(title = scopeTitle, onBack = onBack)
-                EmptyStateView(title = stringResource(R.string.list_search_failed), description = error)
+                EmptyStateView(
+                    title = stringResource(R.string.list_search_failed),
+                    description = failed.format(context),
+                )
             }
         }
-        return
-    }
 
-    val result = docs.searchResult
-    DetailListPage(title = scopeTitle, onBack = onBack) {
-        when (scope) {
-            SearchScope.Feed -> items(result.feed, key = { it.id }) { item ->
-                CompactListRow(
-                    title = item.title,
-                    meta = "${item.sourceName} · ${item.summary}",
-                    keyword = key,
-                    onClick = { onOpenFeed(item.id) },
-                )
-            }
-
-            SearchScope.Forum -> items(result.experience, key = { it.slug }) { doc ->
-                CompactListRow(
-                    title = doc.title,
-                    meta = doc.anchor?.let { stringResource(R.string.list_hit_section, it.text.trim()) } ?: doc.description.orEmpty(),
-                    keyword = key,
-                    onClick = { onOpenEntry(doc.slug) },
-                )
-            }
-
-            SearchScope.Handbook -> items(result.handbook, key = { it.slug }) { doc ->
-                CompactListRow(
-                    title = doc.title,
-                    meta = doc.anchor?.let { stringResource(R.string.list_hit_section, it.text.trim()) } ?: doc.description.orEmpty(),
-                    keyword = key,
-                    onClick = { onOpenEntry(doc.slug) },
-                )
-            }
-
-            else -> item {
-                Column(Modifier.fillMaxWidth().padding(top = 48.dp)) {
-                    Text(
-                        text = stringResource(R.string.list_unknown_scope, scopeKey),
-                        style = SeuType.Subheadline,
-                        color = SeuTheme.colors.secondaryLabel,
+        else -> DetailListPage(title = scopeTitle, onBack = onBack) {
+            when (scope) {
+                SearchScope.Feed -> items(result.feed, key = { it.id }) { item ->
+                    CompactListRow(
+                        title = item.title,
+                        meta = "${item.sourceName} · ${item.summary}",
+                        keyword = key,
+                        onClick = { onOpenFeed(item.id) },
                     )
+                }
+
+                SearchScope.Forum -> items(result.posts, key = { it.id }) { post ->
+                    CompactListRow(
+                        title = post.title?.takeIf { it.isNotBlank() } ?: post.snippet,
+                        meta = listOfNotNull(
+                            post.author?.nameOrFallback,
+                            "${post.likesCount} 赞",
+                            "${post.commentsCount} 评论",
+                        ).joinToString(" · "),
+                        keyword = key,
+                        onClick = { onOpenPost(post.id) },
+                    )
+                }
+
+                SearchScope.Handbook -> items(result.articles, key = { it.id }) { article ->
+                    CompactListRow(
+                        title = article.title,
+                        meta = listOfNotNull(
+                            TopicCatalog.nameForSlug(article.tagSlug),
+                            article.publishedAt?.let { Format.relative(context, it) }
+                                ?.takeIf { it.isNotEmpty() },
+                        ).joinToString(" · "),
+                        keyword = key,
+                        onClick = { onOpenArticle(article.id, article.title) },
+                    )
+                }
+
+                else -> item {
+                    Column(Modifier.fillMaxWidth().padding(top = 48.dp)) {
+                        Text(
+                            text = stringResource(R.string.list_unknown_scope, scopeKey),
+                            style = SeuType.Subheadline,
+                            color = SeuTheme.colors.secondaryLabel,
+                        )
+                    }
                 }
             }
         }

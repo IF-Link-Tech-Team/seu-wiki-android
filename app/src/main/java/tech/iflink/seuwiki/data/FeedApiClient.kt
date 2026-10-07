@@ -2,9 +2,6 @@ package tech.iflink.seuwiki.data
 
 import kotlinx.serialization.Serializable
 import tech.iflink.seuwiki.models.CampusAudience
-import tech.iflink.seuwiki.models.DocAnchor
-import tech.iflink.seuwiki.models.DocKind
-import tech.iflink.seuwiki.models.DocRef
 import tech.iflink.seuwiki.models.FeedCategory
 import tech.iflink.seuwiki.models.FeedItem
 import tech.iflink.seuwiki.models.ValueTier
@@ -93,17 +90,17 @@ class FeedApiClient(
     }
 
     /**
-     * `GET /api/site/pool?q=&type=all&page=&limit=` —— 全站统一搜索。
+     * `GET /api/site/pool?q=&type=feed&page=&limit=` —— 资讯池搜索。
      *
-     * 一次请求同时返回两类信源：`items` 是资讯卡，`docs` 是手册 / 经验条目。
-     * 搜索页的「三信源」就是拿这两组做映射（见 [DocsStore]），不再额外发第二次请求。
+     * 只留 `items`（资讯卡）：响应里的 `docs`（手册 / 经验条目）已随
+     * `/api/site/docs` 信源切换弃用，帖子与手册文章的搜索改走论坛后端的
+     * `GET /api/search`（见 [ForumApiClient.search]）。
      *
-     * [type] 可取 `all` / `feed` / `survival` / `experience`，用来只查某一类信源。
      * [limit] 服务端上限 40，超出会被截断，这里先夹住。
      */
     suspend fun pool(
         query: String,
-        type: String = "all",
+        type: String = "feed",
         page: Int = 1,
         limit: Int = 40,
     ): PoolPage {
@@ -118,17 +115,6 @@ class FeedApiClient(
         )
         return PoolPage(
             items = dto.items.map { it.toFeedItem() },
-            docs = dto.docs.mapNotNull { d ->
-                val kind = DocKind.fromKey(d.kind) ?: return@mapNotNull null
-                DocRef(
-                    slug = d.slug,
-                    kind = kind,
-                    title = d.title,
-                    description = d.description?.takeIf { it.isNotBlank() },
-                    occurredAt = parseIso8601(d.occurredAt),
-                    anchor = d.anchor?.let { DocAnchor(it.id, it.text) },
-                )
-            },
             page = dto.page,
             pageCount = dto.pageCount,
             total = dto.total,
@@ -184,8 +170,6 @@ data class FeedPage(val items: List<FeedItem>, val nextCursor: String?)
 /** pool 响应是按页翻的，不是 cursor。 */
 data class PoolPage(
     val items: List<FeedItem>,
-    /** 手册 / 经验条目，用 [DocRef.kind] 区分；搜索页据此拆成「经验」「手册」两个信源。 */
-    val docs: List<DocRef> = emptyList(),
     val page: Int,
     val pageCount: Int,
     val total: Int,
@@ -256,27 +240,9 @@ private data class ForYouResponse(
 @Serializable
 private data class PoolResponse(
     val items: List<FeedItemSummaryDto> = emptyList(),
-    /** 手册 / 经验条目。契约里有、但早期实现漏了这个字段，导致搜索只有资讯一个信源。 */
-    val docs: List<PoolDocDto> = emptyList(),
     val page: Int = 1,
     val pageCount: Int = 1,
     val total: Int = 0,
-)
-
-@Serializable
-private data class PoolDocDto(
-    val slug: String = "",
-    val kind: String = "",
-    val title: String = "",
-    val description: String? = null,
-    val occurredAt: String? = null,
-    val anchor: PoolDocAnchorDto? = null,
-)
-
-@Serializable
-private data class PoolDocAnchorDto(
-    val id: String = "",
-    val text: String = "",
 )
 
 @Serializable

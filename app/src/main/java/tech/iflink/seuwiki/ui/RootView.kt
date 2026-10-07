@@ -62,15 +62,17 @@ import tech.iflink.seuwiki.design.SeuIcons
 import tech.iflink.seuwiki.design.SeuTheme
 import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.data.DocsStore
+import tech.iflink.seuwiki.data.SearchStore
 import tech.iflink.seuwiki.ui.detail.FeedItemDetailScreen
 import tech.iflink.seuwiki.ui.detail.HomeFeedListScreen
-import tech.iflink.seuwiki.ui.detail.HomeExperienceListScreen
 import tech.iflink.seuwiki.ui.detail.DocEntryDetailScreen
-import tech.iflink.seuwiki.ui.detail.HandbookPartScreen
 import tech.iflink.seuwiki.ui.detail.SearchSourceListScreen
 import tech.iflink.seuwiki.ui.experience.ExperienceScreen
+import tech.iflink.seuwiki.ui.experience.HandbookArticleScreen
+import tech.iflink.seuwiki.ui.experience.HandbookSectionScreen
 import tech.iflink.seuwiki.ui.forum.ForumBookmarksScreen
 import tech.iflink.seuwiki.ui.forum.ForumComposeScreen
+import tech.iflink.seuwiki.ui.forum.ForumHotListScreen
 import tech.iflink.seuwiki.ui.forum.ForumPostDetailScreen
 import tech.iflink.seuwiki.ui.forum.ForumPostListScreen
 import tech.iflink.seuwiki.ui.feed.FeedScope
@@ -123,7 +125,8 @@ object Routes {
     const val FEED_DETAIL = "feed/detail/{id}"
     const val FORUM_DETAIL = "forum/detail/{id}"
     const val TOPIC_DETAIL = "forum/topic/{slug}"
-    const val HANDBOOK_SECTION = "handbook/section/{id}"
+    const val HANDBOOK_SECTION = "handbook/section/{id}?name={name}"
+    const val HANDBOOK_ARTICLE = "handbook/article/{id}?title={title}"
     const val HANDBOOK_ENTRY = "handbook/entry/{slug}"
     const val SEARCH_SOURCE_LIST = "search/list/{scope}/{keyword}"
     const val TOOL_TIMETABLE = "tools/timetable"
@@ -161,7 +164,15 @@ object Routes {
     fun feedDetail(id: String) = "feed/detail/${seg(id)}"
     fun forumDetail(id: String) = "forum/detail/${seg(id)}"
     fun topicDetail(slug: String) = "forum/topic/${seg(slug)}"
-    fun handbookSection(id: String) = "handbook/section/${seg(id)}"
+
+    /** 手册板块详情。[name] 是列表页带来的板块名，详情返回前标题栏先显示它。 */
+    fun handbookSection(id: String, name: String = "") =
+        "handbook/section/${seg(id)}" + if (name.isBlank()) "" else "?name=${seg(name)}"
+
+    /** 手册文章详情。[title] 同样是占位标题（详情返回前先顶上）。 */
+    fun handbookArticle(id: String, title: String = "") =
+        "handbook/article/${seg(id)}" + if (title.isBlank()) "" else "?title=${seg(title)}"
+
     fun handbookEntry(slug: String) = "handbook/entry/${seg(slug)}"
     fun searchSourceList(scope: String, keyword: String) =
         "search/list/${seg(scope)}/${seg(keyword)}"
@@ -207,10 +218,13 @@ fun RootView(
     // （实测带一个乱写的 Bearer 一样 200）。挂了 token 只会把「能不能读到内容」
     // 和「登录态是否健康」耦合起来，还可能让一次刷列表被续期失败牵连。
     val feedStore: FeedStore = viewModel(factory = FeedStore.Factory)
+    // 只缓存旧文档条目的详情（收藏 / 深链仍会打开它们）；手册树与经验长文已移除。
     val docsStore: DocsStore = viewModel(factory = DocsStore.Factory)
     // 论坛与资讯**共用同一个 Logto 会话**：tokenProvider 直接指向 AuthStore 的
     // accessToken()（自带续期），所以用户登录一次就能同时用在两边，不存在第二次登录。
     val forumStore: ForumStore = viewModel(factory = ForumStore.factory { auth.accessToken() })
+    // 搜索 = 资讯（pool?type=feed）+ 论坛搜索（帖子与手册文章）两组并发信源。
+    val searchStore: SearchStore = viewModel(factory = SearchStore.factory { auth.accessToken() })
     // 论坛里任何需要登录的动作（点赞/评论/发帖）都走这个回调，与个人页同一个登录流程。
     val launchLogin: () -> Unit = { auth.launchSignIn(context) }
     val navController = rememberNavController()
@@ -266,12 +280,12 @@ fun RootView(
                 HomeScreen(
                     profile = profile,
                     feedStore = feedStore,
-                    docs = docsStore,
+                    forumStore = forumStore,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenFeedList = { navController.navigate(Routes.HOME_FEED_LIST) },
-                    onOpenExperienceList = { navController.navigate(Routes.HOME_FORUM_LIST) },
+                    onOpenForumList = { navController.navigate(Routes.HOME_FORUM_LIST) },
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
-                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
+                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
                 )
             }
             composable(AppTab.Feed.route) {
@@ -284,15 +298,16 @@ fun RootView(
             }
             composable(AppTab.Experience.route) {
                 ExperienceScreen(
-                    profile = profile,
-                    docs = docsStore,
-                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
-                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
-                    onOpenHandbookPart = { navController.navigate(Routes.handbookSection(it)) },
                     forumStore = forumStore,
+                    isLoggedIn = auth.isLoggedIn,
+                    onOpenProfile = { navController.navigate(Routes.PROFILE) },
+                    onLogin = launchLogin,
                     onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
                     onCompose = { navController.navigate(Routes.FORUM_COMPOSE) },
                     onOpenTopic = { navController.navigate(Routes.topicDetail(it)) },
+                    onOpenHandbookSection = { slug, name ->
+                        navController.navigate(Routes.handbookSection(slug, name))
+                    },
                 )
             }
             composable(AppTab.Tools.route) {
@@ -304,10 +319,13 @@ fun RootView(
             }
             composable(AppTab.Search.route) {
                 SearchScreen(
-                    docs = docsStore,
+                    store = searchStore,
                     onOpenProfile = { navController.navigate(Routes.PROFILE) },
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
-                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
+                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
+                    onOpenArticle = { id, title ->
+                        navController.navigate(Routes.handbookArticle(id, title))
+                    },
                     onOpenSourceList = { scope, keyword ->
                         navController.navigate(Routes.searchSourceList(scope.key, keyword))
                     },
@@ -319,7 +337,6 @@ fun RootView(
                 ProfileScreen(
                     profile = profile,
                     auth = auth,
-                    docs = docsStore,
                     onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
                     onOpenForumBookmarks = { navController.navigate(Routes.FORUM_BOOKMARKS) },
                     onBack = { navController.popBackStack() },
@@ -335,11 +352,13 @@ fun RootView(
                 )
             }
             composable(Routes.HOME_FORUM_LIST) {
-                // 社区列表改为经验长文：forum 那套帖子是编造的，不再走生产路径。
-                HomeExperienceListScreen(
-                    docs = docsStore,
+                // 主页「社区热议」查看全部 → 完整热榜（与经验 tab「热门」同源）。
+                ForumHotListScreen(
+                    store = forumStore,
+                    title = stringResource(R.string.home_section_forum),
                     onBack = { navController.popBackStack() },
-                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
+                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
+                    onOpenTopic = { navController.navigate(Routes.topicDetail(it)) },
                 )
             }
             composable(
@@ -371,6 +390,9 @@ fun RootView(
                     postId = Routes.decode(entry.arguments?.getString("id")),
                     onBack = { navController.popBackStack() },
                     onLoginRequired = launchLogin,
+                    onOpenHandbookArticle = { id ->
+                        navController.navigate(Routes.handbookArticle(id))
+                    },
                 )
             }
             // 话题页 = 按 tag slug 过滤的帖子列表。后端没有 /api/tags，
@@ -415,15 +437,39 @@ fun RootView(
                     },
                 )
             }
+            // 手册板块详情：{id} 即板块的 tag slug；{name} 是列表页带来的占位标题。
             composable(
                 route = Routes.HANDBOOK_SECTION,
-                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+                arguments = listOf(
+                    navArgument("id") { type = NavType.StringType },
+                    navArgument("name") { nullable = true; defaultValue = null },
+                ),
             ) { entry ->
-                HandbookPartScreen(
-                    docs = docsStore,
-                    partKey = Routes.decode(entry.arguments?.getString("id")),
+                HandbookSectionScreen(
+                    store = forumStore,
+                    slug = Routes.decode(entry.arguments?.getString("id")),
+                    fallbackName = Routes.decode(entry.arguments?.getString("name")),
                     onBack = { navController.popBackStack() },
-                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
+                    onOpenArticle = { id, title ->
+                        navController.navigate(Routes.handbookArticle(id, title))
+                    },
+                    onOpenTopic = { navController.navigate(Routes.topicDetail(it)) },
+                )
+            }
+            // 手册文章详情：渲染论坛后端沉淀的 content_html。
+            composable(
+                route = Routes.HANDBOOK_ARTICLE,
+                arguments = listOf(
+                    navArgument("id") { type = NavType.StringType },
+                    navArgument("title") { nullable = true; defaultValue = null },
+                ),
+            ) { entry ->
+                HandbookArticleScreen(
+                    store = forumStore,
+                    articleId = Routes.decode(entry.arguments?.getString("id")),
+                    fallbackTitle = Routes.decode(entry.arguments?.getString("title")),
+                    onBack = { navController.popBackStack() },
+                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
                 )
             }
             composable(
@@ -447,12 +493,15 @@ fun RootView(
                 ),
             ) { entry ->
                 SearchSourceListScreen(
+                    store = searchStore,
                     scopeKey = Routes.decode(entry.arguments?.getString("scope")),
                     keyword = Routes.decode(entry.arguments?.getString("keyword")),
                     onBack = { navController.popBackStack() },
-                    docs = docsStore,
                     onOpenFeed = { navController.navigate(Routes.feedDetail(it)) },
-                    onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
+                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
+                    onOpenArticle = { id, title ->
+                        navController.navigate(Routes.handbookArticle(id, title))
+                    },
                 )
             }
             composable(Routes.TOOL_TIMETABLE) {
