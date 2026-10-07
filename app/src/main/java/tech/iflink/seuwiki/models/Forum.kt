@@ -154,3 +154,19 @@ enum class ForumTargetType(val key: String) {
     Post("post"),
     Comment("comment"),
 }
+/** 一条收藏记录。[post] 是服务端剔除已删除内容后剩下的目标帖。 */
+data class ForumBookmarkedPost(
+    val bookmarkId: String,
+    val post: ForumPost,
+)
+
+/**
+ * 收藏列表的一页。
+ *
+ * [nextCursor] 非 null **不等于还有下一页** —— 服务端会剔除目标已删除的条目但游标
+ * 照样前进（`services/bookmarks.ts:141`），所以会出现「本页不足 limit 条却还有游标」。
+ */
+data class ForumBookmarkPage(
+    val items: List<ForumBookmarkedPost>,
+    val nextCursor: String?,
+)

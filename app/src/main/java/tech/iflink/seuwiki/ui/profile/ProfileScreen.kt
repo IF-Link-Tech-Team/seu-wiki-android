@@ -107,6 +107,7 @@ fun ProfileScreen(
     auth: AuthStore,
     docs: DocsStore,
     onOpenEntry: (String) -> Unit,
+    onOpenForumBookmarks: () -> Unit,
     onBack: () -> Unit,
 ) {
     // Which picker row is open; "" closes them all, as `dismiss()` did on iOS.
@@ -144,6 +145,9 @@ fun ProfileScreen(
                 item(key = "topics") { FollowedTopicsSection(profile) }
                 item(key = "bookmarks") {
                     BookmarksSection(profile = profile, docs = docs, onOpenEntry = onOpenEntry)
+                }
+                item(key = "forum_bookmarks") {
+                    ForumBookmarksRow(onClick = onOpenForumBookmarks)
                 }
                 item(key = "reminders") { RemindersSection(profile) }
                 item(key = "reset") { ResetRow(profile) }
@@ -875,6 +879,51 @@ private fun BookmarkRow(entry: DocEntry, onClick: () -> Unit) {
                     color = colors.secondaryLabel,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 「论坛收藏」入口 —— 指向论坛的**帖子**收藏，与上面的 [BookmarksSection]（知识库条目
+ * 收藏）不是一回事，所以单开一行而不是塞进那一节。
+ *
+ * 之前 `Routes.FORUM_BOOKMARKS` 只注册了路由、没有任何地方 navigate 过去，
+ * 收藏功能等于没有入口。
+ */
+@Composable
+private fun ForumBookmarksRow(onClick: () -> Unit) {
+    val colors = SeuTheme.colors
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        SectionHeader(title = stringResource(R.string.profile_section_forum_bookmarks), actionLabel = null)
+        CardColumn(padding = 0.dp) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // 48dp 最小触控目标：整行可点，不只是文字那一小块。
+                    .heightIn(min = 48.dp)
+                    .clickable(onClick = onClick)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                IconWell(
+                    icon = {
+                        Icon(
+                            imageVector = SeuIcons.of("bubble.left.and.text.bubble.right"),
+                            contentDescription = null,
+                            tint = colors.accent,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    },
+                    tint = colors.accent,
+                )
+                Text(
+                    text = stringResource(R.string.profile_forum_bookmarks),
+                    style = SeuType.SubheadlineMedium,
+                    color = colors.label,
+                    modifier = Modifier.weight(1f),
                 )
             }
         }

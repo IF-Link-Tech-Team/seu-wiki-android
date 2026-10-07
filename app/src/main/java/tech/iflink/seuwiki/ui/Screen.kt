@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -156,6 +157,14 @@ fun EmptyStateView(
     description: String? = null,
     icon: @Composable () -> Unit = {},
     topPadding: Dp = 80.dp,
+    /**
+     * 空态里的可选动作按钮（整块按下，不是文字）。
+     *
+     * 用于「这里本来该有东西，但缺了某个前提才能有」的空态 —— 比如未登录时的
+     * 收藏页：只摆一句「登录后才能进行这个操作」而不给按钮，用户是走不下去的。
+     * 单纯「还没有内容」的空态不要传。
+     */
+    action: (@Composable () -> Unit)? = null,
 ) {
     val colors = SeuTheme.colors
     Column(
@@ -182,6 +191,10 @@ fun EmptyStateView(
                 color = colors.tertiaryLabel,
                 textAlign = TextAlign.Center,
             )
+        }
+        if (action != null) {
+            Spacer(Modifier.height(4.dp))
+            action()
         }
     }
 }

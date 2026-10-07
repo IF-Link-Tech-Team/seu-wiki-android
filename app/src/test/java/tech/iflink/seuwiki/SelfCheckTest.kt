@@ -988,4 +988,127 @@ class SelfCheckTest {
             src.contains("tokenProvider"),
         )
     }
+
+    @Test
+    fun `发帖按钮必须真的挂到论坛列表上`() {
+        // 回归锁：ComposeFab 靠 onCompose 非空才渲染（null 就第一行 return）。
+        // 这条链路跨三个文件，之前正是在 ExperienceScreen → ForumPostList
+        // 这一段漏传，签名接了、参数没转发，App 编得过、按钮就是不出现。
+        val root = File("src/main/java/tech/iflink/seuwiki")
+        val experience = File(root, "ui/experience/ExperienceScreen.kt")
+        val forum = File(root, "ui/forum/ForumScreens.kt")
+        val rootView = File(root, "ui/RootView.kt")
+        assertTrue("应当找到 ExperienceScreen.kt", experience.isFile)
+        assertTrue("应当找到 ForumScreens.kt", forum.isFile)
+        assertTrue("应当找到 RootView.kt", rootView.isFile)
+
+        // 1) 列表组件内部确实渲染了 FAB
+        assertTrue(
+            "ForumPostList 必须渲染 ComposeFab",
+            Regex("""ComposeFab\(\s*onCompose\s*=\s*onCompose\s*\)""").containsMatchIn(forum.readText(Charsets.UTF_8)),
+        )
+        // 2) 「关注」分区把回调转发进去 —— 本次真正断掉的那一环
+        val followingCall = Regex(
+            """ExperienceTab\.Following\s*->\s*ForumPostList\((?:[^()]|\([^()]*\))*\)""",
+        ).find(experience.readText(Charsets.UTF_8))
+        assertNotNull("应当找到「关注」分区对 ForumPostList 的调用", followingCall)
+        assertTrue(
+            "「关注」分区必须把 onCompose 转发给 ForumPostList，否则发帖按钮不出现",
+            followingCall!!.value.contains("onCompose"),
+        )
+        // 3) 顶层路由给了真实目标
+        assertTrue(
+            "RootView 必须把发帖按钮接到 FORUM_COMPOSE 路由",
+            Regex("""onCompose\s*=\s*\{\s*navController\.navigate\(Routes\.FORUM_COMPOSE\)""")
+                .containsMatchIn(rootView.readText(Charsets.UTF_8)),
+        )
+    }
+
+    @Test
+    fun `论坛的收藏页和话题页都必须有真实入口`() {
+        // 回归锁：这两个路由一度「注册了但没人 navigate」—— 页面写得再全，
+        // 用户也永远到不了。这里钉住「路由注册」与「存在调用点」两头。
+        val root = File("src/main/java/tech/iflink/seuwiki")
+        val rootView = File(root, "ui/RootView.kt")
+        val profile = File(root, "ui/profile/ProfileScreen.kt")
+        val forum = File(root, "ui/forum/ForumScreens.kt")
+        assertTrue("应当找到 ProfileScreen.kt", profile.isFile)
+        val rv = rootView.readText(Charsets.UTF_8)
+        val fs = forum.readText(Charsets.UTF_8)
+
+        // --- 收藏页 ---
+        assertTrue("FORUM_BOOKMARKS 路由应当已注册", rv.contains("composable(Routes.FORUM_BOOKMARKS)"))
+        assertTrue(
+            "必须有人 navigate 到收藏页，否则论坛收藏功能没有入口",
+            rv.contains("navController.navigate(Routes.FORUM_BOOKMARKS)"),
+        )
+        assertTrue(
+            "个人页必须渲染收藏入口那一行",
+            profile.readText(Charsets.UTF_8).contains("onOpenForumBookmarks"),
+        )
+
+        // --- 话题页 ---
+        assertTrue("topicDetail 路由应当已注册", rv.contains("route = Routes.TOPIC_DETAIL"))
+        assertTrue(
+            "必须有人 navigate 到话题页，否则 topicDetail 是死代码",
+            Regex("""navController\.navigate\(Routes\.topicDetail\(it\)\)""").containsMatchIn(rv),
+        )
+        // 标签要真的可点：onClick 必须在 ForumPostRow 内部被用掉
+        assertTrue(
+            "ForumPostRow 收到 onOpenTopic 却没渲染可点标签，话题页仍然进不去",
+            fs.contains("ForumTagPill") && Regex("""onClick = onOpenTopic""").containsMatchIn(fs),
+        )
+        // slug 为空的标签不许给入口：传空串后端会返回全站帖子，不是用户点的话题
+        assertTrue(
+            "空 slug 的标签不能给话题页入口",
+            Regex("""takeIf\s*\{\s*tag\.slug\.isNotBlank\(\)""").containsMatchIn(fs),
+        )
+
+        // --- 未登录的空态必须能照做 ---
+        // 收藏页以前带着 onGoLogin 回调却从不使用：空态只摆一句
+        // 「登录后才能进行这个操作」，不给任何按钮，用户走不下去。
+        val storeSrc = File(root, "data/ForumStore.kt").readText(Charsets.UTF_8)
+        assertTrue(
+            "BookmarkState 缺 needsLogin，空态分不出「要登录」和「真加载失败」",
+            Regex("""data class BookmarkState\((?:[^()]|\([^()]*\))*needsLogin""").containsMatchIn(storeSrc),
+        )
+        val body = fs.substringAfter("fun ForumBookmarksScreen(")
+        assertTrue(
+            "onGoLogin 必须真的被用掉，不能是死参数",
+            Regex("""onClick\s*=\s*onGoLogin""").containsMatchIn(body),
+        )
+        assertTrue(
+            "需登录时要把登录按钮交给空态",
+            Regex("""action\s*=\s*loginAction""").containsMatchIn(body),
+        )
+    }
+
+    @Test
+    fun `配图的相对路径要拼成绝对地址`() {
+        // 服务端 `src/lib/media/security.mjs` 刻意只返回 `/api/media/...` 相对路径。
+        // 客户端拼错域名，帖子配图就整片加载不出来，而且没有任何报错。
+        assertEquals(
+            "https://forum.seu.wiki/api/media/x.png",
+            ForumApiClient.absoluteUrl("/api/media/x.png"),
+        )
+        // 没有前导斜杠也要拼对，否则会变成 //api/...
+        assertEquals(
+            "https://forum.seu.wiki/api/media/x.png",
+            ForumApiClient.absoluteUrl("api/media/x.png"),
+        )
+        // 已经是绝对地址的原样返回，不能被再套一层域名
+        assertEquals(
+            "https://cdn.example.com/a.png",
+            ForumApiClient.absoluteUrl("https://cdn.example.com/a.png"),
+        )
+        // 自定义 baseUrl（测试服务器用）也要生效
+        assertEquals(
+            "http://127.0.0.1:8080/api/media/x.png",
+            ForumApiClient.absoluteUrl("/api/media/x.png", baseUrl = "http://127.0.0.1:8080/"),
+        )
+        // 空值不产出占位图 URL —— 否则会给 AsyncImage 塞一个 "/"，渲染出破图
+        assertNull("null 不该拼出地址", ForumApiClient.absoluteUrl(null))
+        assertNull("空串不该拼出地址", ForumApiClient.absoluteUrl(""))
+        assertNull("纯空白不该拼出地址", ForumApiClient.absoluteUrl("   "))
+    }
 }

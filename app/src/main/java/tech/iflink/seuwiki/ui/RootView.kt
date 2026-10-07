@@ -69,6 +69,7 @@ import tech.iflink.seuwiki.ui.detail.DocEntryDetailScreen
 import tech.iflink.seuwiki.ui.detail.HandbookPartScreen
 import tech.iflink.seuwiki.ui.detail.SearchSourceListScreen
 import tech.iflink.seuwiki.ui.experience.ExperienceScreen
+import tech.iflink.seuwiki.ui.forum.ForumBookmarksScreen
 import tech.iflink.seuwiki.ui.forum.ForumComposeScreen
 import tech.iflink.seuwiki.ui.forum.ForumPostDetailScreen
 import tech.iflink.seuwiki.ui.forum.ForumPostListScreen
@@ -129,6 +130,7 @@ object Routes {
     const val TOOL_GPA = "tools/gpa"
     const val TOOL_PLACEHOLDER = "tools/other/{id}"
     const val FORUM_COMPOSE = "forum/compose"
+    const val FORUM_BOOKMARKS = "forum/bookmarks"
 
     /**
      * 编码**单个**路径段。
@@ -289,6 +291,8 @@ fun RootView(
                     onOpenHandbookPart = { navController.navigate(Routes.handbookSection(it)) },
                     forumStore = forumStore,
                     onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
+                    onCompose = { navController.navigate(Routes.FORUM_COMPOSE) },
+                    onOpenTopic = { navController.navigate(Routes.topicDetail(it)) },
                 )
             }
             composable(AppTab.Tools.route) {
@@ -317,6 +321,7 @@ fun RootView(
                     auth = auth,
                     docs = docsStore,
                     onOpenEntry = { navController.navigate(Routes.handbookEntry(it)) },
+                    onOpenForumBookmarks = { navController.navigate(Routes.FORUM_BOOKMARKS) },
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -385,7 +390,17 @@ fun RootView(
                     title = topicName,
                     tagSlug = slug,
                     onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
+                    onOpenTopic = { navController.navigate(Routes.topicDetail(it)) },
                     onBack = { navController.popBackStack() },
+                )
+            }
+            composable(Routes.FORUM_BOOKMARKS) {
+                ForumBookmarksScreen(
+                    store = forumStore,
+                    onBack = { navController.popBackStack() },
+                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
+                    onOpenTopic = { navController.navigate(Routes.topicDetail(it)) },
+                    onGoLogin = launchLogin,
                 )
             }
             composable(Routes.FORUM_COMPOSE) {

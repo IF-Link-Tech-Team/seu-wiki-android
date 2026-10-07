@@ -10,6 +10,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tech.iflink.seuwiki.data.ForumApiClient.ForumApiException
+import tech.iflink.seuwiki.models.ForumBookmarkPage
+import tech.iflink.seuwiki.models.ForumBookmarkedPost
 import tech.iflink.seuwiki.models.ForumComment
 import tech.iflink.seuwiki.models.ForumCommentsPage
 import tech.iflink.seuwiki.models.ForumPost
@@ -85,6 +87,26 @@ class ForumStore(
     /** 发帖 / 发评论的结果提示，供 UI 消费一次后清空。 */
     private val _toast = mutableStateOf<String?>(null)
     val toast: String? get() = _toast.value
+
+    /** 收藏列表。与手册条目的本地收藏（UserProfileStore.bookmarkedSlugs）是两回事。 */
+    data class BookmarkState(
+        val items: List<ForumBookmarkedPost> = emptyList(),
+        val nextCursor: String? = null,
+        val isLoading: Boolean = false,
+        val isLoadingMore: Boolean = false,
+        val hasLoaded: Boolean = false,
+        val isOffline: Boolean = false,
+        /**
+         * 401 时为 true。收藏是**纯服务端**接口，未登录必然 401 ——
+         * 空态据此给「去登录」按钮，而不是把「登录后才能进行这个操作」摆在那里
+         * 却没有任何办法照做。
+         */
+        val needsLogin: Boolean = false,
+        val errorMessage: String? = null,
+    )
+
+    private val _bookmarks = mutableStateOf(BookmarkState())
+    val bookmarks: BookmarkState get() = _bookmarks.value
 
     private var currentSort = ForumSort.Latest
     private var currentTag: String? = null
@@ -310,6 +332,57 @@ class ForumStore(
                     onDone()
                 }
                 .onFailure { e -> _toast.value = describe(e) }
+        }
+    }
+
+    // MARK: - 收藏
+
+    fun refreshBookmarks() {
+        _bookmarks.value = BookmarkState(isLoading = true)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.bookmarks() } }
+                .onSuccess { page ->
+                    _bookmarks.value = BookmarkState(
+                        items = page.items,
+                        nextCursor = page.nextCursor,
+                        hasLoaded = true,
+                    )
+                }
+                .onFailure { e ->
+                    _bookmarks.value = BookmarkState(
+                        isLoading = false,
+                        hasLoaded = true,
+                        isOffline = (e as? ForumApiException)?.isUnauthorized != true,
+                        needsLogin = (e as? ForumApiException)?.isUnauthorized == true,
+                        errorMessage = describe(e),
+                    )
+                }
+        }
+    }
+
+    fun loadMoreBookmarks() {
+        val state = _bookmarks.value
+        if (state.isLoading || state.isLoadingMore) return
+        val cursor = state.nextCursor ?: return
+        _bookmarks.value = state.copy(isLoadingMore = true)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.bookmarks(cursor) } }
+                .onSuccess { page ->
+                    val current = _bookmarks.value
+                    // 服务端会剔除已删除的目标，所以同一页可能少于 limit 条但游标非空 ——
+                    // 不能据此判定末页，只能靠游标为 null。
+                    _bookmarks.value = current.copy(
+                        items = (current.items + page.items).distinctBy { it.bookmarkId },
+                        nextCursor = page.nextCursor,
+                        isLoadingMore = false,
+                    )
+                }
+                .onFailure { e ->
+                    _bookmarks.value = _bookmarks.value.copy(
+                        isLoadingMore = false,
+                        errorMessage = describe(e),
+                    )
+                }
         }
     }
 

@@ -10,6 +10,8 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.add
 import tech.iflink.seuwiki.models.ForumAuthor
 import tech.iflink.seuwiki.models.ForumComment
+import tech.iflink.seuwiki.models.ForumBookmarkPage
+import tech.iflink.seuwiki.models.ForumBookmarkedPost
 import tech.iflink.seuwiki.models.ForumCommentsPage
 import tech.iflink.seuwiki.models.ForumImage
 import tech.iflink.seuwiki.models.ForumPost
@@ -245,6 +247,57 @@ class ForumApiClient(
         )
     }
 
+    /**
+     * 把服务端的相对资源路径拼成可直接加载的绝对 URL。
+     *
+     * `post_assets.asset_url` 与上传返回的 `path` 都是 `/api/media/...` 形式
+     * （`src/lib/media/security.mjs:154-159`），不带域名。**bookmarks 返回的
+     * `preview_image_url` 可能是外部 URL**，那种情况原样返回。
+     */
+    /**
+     * `GET /api/bookmarks` —— 我的收藏列表，**需登录**。
+     *
+     * 服务端会把目标已删除/不可见的条目**剔除**，但游标照样前进
+     * （`src/lib/services/bookmarks.ts:141`），所以可能出现「返回条数 < limit 但
+     * next_cursor 非 null」，这是正常的，不能当成末页。
+     */
+    suspend fun bookmarks(cursor: String? = null, limit: Int = PageSize): ForumBookmarkPage {
+        val dto: BookmarksResponse = get(
+            "/api/bookmarks",
+            buildList {
+                add("limit" to limit.coerceIn(1, 50).toString())
+                cursor?.takeIf { it.isNotBlank() }?.let { add("cursor" to it) }
+            },
+        )
+        return ForumBookmarkPage(
+            items = dto.bookmarks.mapNotNull { b ->
+                val target = b.target ?: return@mapNotNull null
+                ForumBookmarkedPost(
+                    bookmarkId = b.id,
+                    post = ForumPost(
+                        id = target.id,
+                        title = target.title,
+                        content = target.excerpt,
+                        postType = "normal",
+                        createdAt = parseIso8601(target.createdAt),
+                        likesCount = target.likesCount,
+                        commentsCount = target.commentsCount,
+                        author = target.author?.let {
+                            it.toAuthor()
+                        },
+                        // 收藏列表给的是 preview_image_url，可能不是 /api/media/ 形式
+                        images = listOfNotNull(
+                            target.previewImageUrl?.let {
+                                ForumImage(id = "", assetUrl = it, mimeType = null, sortOrder = 0)
+                            }
+                        ),
+                    ),
+                )
+            },
+            nextCursor = dto.nextCursor,
+        )
+    }
+
     // MARK: - Plumbing
 
     private suspend inline fun <reified T> get(
@@ -342,6 +395,22 @@ class ForumApiClient(
     companion object {
         const val DefaultBaseUrl = "https://forum.seu.wiki"
         const val PageSize = 20
+
+        /**
+         * 把服务端的相对资源路径拼成可直接加载的绝对 URL。
+         *
+         * `post_assets.asset_url` 与上传返回的 `path` 都是 `/api/media/...` 形式
+         * （`src/lib/media/security.mjs:154-159`），不带域名，客户端必须自己拼。
+         * **bookmarks 返回的 `preview_image_url` 可能是外部 URL**，那种原样返回。
+         *
+         * 放 companion 是因为它是纯函数：渲染层手上往往只有 URL 字符串，
+         * 没有 client 实例，不该为此在 UI 里造一个。
+         */
+        fun absoluteUrl(path: String?, baseUrl: String = DefaultBaseUrl): String? {
+            if (path.isNullOrBlank()) return null
+            if (path.startsWith("http://") || path.startsWith("https://")) return path
+            return baseUrl.trimEnd('/') + "/" + path.trimStart('/')
+        }
     }
 }
 
@@ -459,6 +528,40 @@ private data class LikedResponse(val liked: Boolean)
 
 @Serializable
 private data class BookmarkedResponse(val bookmarked: Boolean)
+
+@Serializable
+private data class BookmarkDto(
+    val id: String,
+    @SerialName("target_type") val targetType: String = "post",
+    @SerialName("target_id") val targetId: String,
+    @SerialName("created_at") val createdAt: String? = null,
+    val target: BookmarkTargetDto? = null,
+)
+
+/**
+ * 收藏条目里的目标帖。
+ *
+ * ⚠️ 这里字段是 **snake_case**（`preview_image_url` / `likes_count`），而顶层
+ * 响应外层也是 snake_case —— 与 `/api/featured`、`/api/me` 的 camelCase 不同，
+ * 三种风格在同一套 API 里混用，别想当然。
+ */
+@Serializable
+private data class BookmarkTargetDto(
+    val id: String,
+    val title: String? = null,
+    val excerpt: String = "",
+    @SerialName("preview_image_url") val previewImageUrl: String? = null,
+    @SerialName("created_at") val createdAt: String? = null,
+    @SerialName("likes_count") val likesCount: Int = 0,
+    @SerialName("comments_count") val commentsCount: Int = 0,
+    val author: AuthorDto? = null,
+)
+
+@Serializable
+private data class BookmarksResponse(
+    val bookmarks: List<BookmarkDto> = emptyList(),
+    @SerialName("next_cursor") val nextCursor: String? = null,
+)
 
 // MARK: - DTO → model
 

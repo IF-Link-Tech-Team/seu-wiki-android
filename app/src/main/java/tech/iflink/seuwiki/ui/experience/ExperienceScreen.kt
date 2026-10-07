@@ -84,6 +84,8 @@ fun ExperienceScreen(
     onOpenEntry: (String) -> Unit,
     onOpenHandbookPart: (String) -> Unit,
     onOpenPost: (String) -> Unit,
+    onCompose: () -> Unit,
+    onOpenTopic: (String) -> Unit,
 ) {
     val tabs = ExperienceTab.all
     var tabKey by rememberSaveable { mutableStateOf(ExperienceTab.Hot.key) }
@@ -126,6 +128,10 @@ fun ExperienceScreen(
                     ExperienceTab.Following -> ForumPostList(
                         store = forumStore,
                         onOpenPost = onOpenPost,
+                        // 必须转发：不传的话 ForumPostList 里 onCompose 默认是 null，
+                        // ComposeFab 第一行就 return，右下角发帖按钮整个不会出现。
+                        onCompose = onCompose,
+                        onOpenTopic = onOpenTopic,
                     )
                 }
             }
