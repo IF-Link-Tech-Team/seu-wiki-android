@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.layout.imePadding
@@ -34,6 +35,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -67,6 +69,7 @@ import tech.iflink.seuwiki.design.VSpace
 import tech.iflink.seuwiki.design.cardStyle
 import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumSort
+import tech.iflink.seuwiki.models.ForumTargetType
 import tech.iflink.seuwiki.models.SuggestedTopic
 import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.ui.DetailHeader
@@ -823,12 +826,49 @@ fun ForumPostDetailScreen(
     onBack: () -> Unit,
     onLoginRequired: () -> Unit,
     onOpenHandbookArticle: (String) -> Unit = {},
+    onEditPost: (String) -> Unit = {},
 ) {
     val colors = SeuTheme.colors
     val state = store.detail
     var commentDraft by remember(postId) { mutableStateOf("") }
+    // 待确认的删除动作：first=目标类型，second=目标 id，third=是否管理删除。
+    var pendingDelete by remember(postId) {
+        mutableStateOf<Triple<ForumTargetType, String, Boolean>?>(null)
+    }
 
     LaunchedEffect(postId) { store.loadDetail(postId) }
+
+    pendingDelete?.let { (targetType, targetId, isAdminAction) ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text(if (isAdminAction) "管理删除" else "删除") },
+            text = {
+                Text(
+                    if (isAdminAction) "以管理员身份删除这条内容？关联的评论、点赞等数据会一并删除，此操作无法恢复。"
+                    else "删除后无法恢复，确定删除吗？"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingDelete = null
+                        val done: () -> Unit =
+                            if (targetType == ForumTargetType.Post) {
+                                // 帖没了就回列表；信息流已由 store 内部作废重拉。
+                                onBack
+                            } else {
+                                { store.loadDetail(postId) }
+                            }
+                        if (isAdminAction) store.adminDeleteContent(targetType, targetId, done)
+                        else store.deleteContent(targetType, targetId, done)
+                    },
+                ) { Text("删除", color = colors.accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+            },
+        )
+    }
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
@@ -909,6 +949,41 @@ fun ForumPostDetailScreen(
                             Spacer(Modifier.width(10.dp))
                             StatGlyph(icon = "bubble.left", count = post.commentsCount)
                         }
+                        // 作者自管（编辑/删除）与管理删除。可见性按 viewer 投影判断，
+                        // 真正的门禁在服务端（403 兜底），与 AGENTS.md 的登录门禁规则不冲突。
+                        val viewerId = store.viewer?.id
+                        val isAuthor = viewerId != null && post.author?.id == viewerId
+                        val canAdminDelete = store.hasCapability("admin:content:delete")
+                        if (isAuthor || canAdminDelete) {
+                            VSpace(10.dp)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (isAuthor) {
+                                    ForumChip(
+                                        label = "编辑",
+                                        selected = false,
+                                        onClick = { onEditPost(post.id) },
+                                    )
+                                    ForumChip(
+                                        label = "删除",
+                                        selected = false,
+                                        onClick = {
+                                            pendingDelete =
+                                                Triple(ForumTargetType.Post, post.id, false)
+                                        },
+                                    )
+                                }
+                                if (canAdminDelete && !isAuthor) {
+                                    ForumChip(
+                                        label = "管理删除",
+                                        selected = false,
+                                        onClick = {
+                                            pendingDelete =
+                                                Triple(ForumTargetType.Post, post.id, true)
+                                        },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -981,6 +1056,27 @@ fun ForumPostDetailScreen(
                                 VSpace(4.dp)
                                 Text(comment.content, style = SeuType.Body, color = colors.label)
                             }
+                            // 评论作者可删自己的；管理员可删任何评论。
+                            val commentViewerId = store.viewer?.id
+                            val ownComment = commentViewerId != null && comment.authorId == commentViewerId
+                            val canAdminDeleteComment = store.hasCapability("admin:content:delete")
+                            if (ownComment || canAdminDeleteComment) {
+                                Text(
+                                    text = if (!ownComment && canAdminDeleteComment) "管理删除" else "删除",
+                                    style = SeuType.Caption,
+                                    color = colors.accent,
+                                    modifier = Modifier
+                                        .align(Alignment.CenterVertically)
+                                        .clickable {
+                                            pendingDelete = Triple(
+                                                ForumTargetType.Comment,
+                                                comment.id,
+                                                !ownComment && canAdminDeleteComment,
+                                            )
+                                        }
+                                        .padding(start = 8.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -1022,7 +1118,7 @@ fun ForumPostDetailScreen(
     }
 }
 
-/** 发帖页。 */
+/** 发帖页。[editPostId] 非空时为编辑模式：预填现有标题/正文，提交走 PATCH。 */
 @Composable
 fun ForumComposeScreen(
     store: ForumStore,
@@ -1030,14 +1126,32 @@ fun ForumComposeScreen(
     onBack: () -> Unit,
     onLoginRequired: () -> Unit,
     onPosted: (String) -> Unit,
+    editPostId: String? = null,
 ) {
     val colors = SeuTheme.colors
-    var title by remember { mutableStateOf("") }
-    var content by remember { mutableStateOf("") }
+    var title by remember(editPostId) { mutableStateOf("") }
+    var content by remember(editPostId) { mutableStateOf("") }
+    var prefilled by remember(editPostId) { mutableStateOf(editPostId == null) }
+
+    // 编辑模式从详情缓存预填 —— 入口就是详情页的「编辑」按钮，detail 已在内存里；
+    // 万一没有（深链接进来）就拉一次。
+    LaunchedEffect(editPostId) {
+        if (editPostId != null && store.detail.post?.id != editPostId) {
+            store.loadDetail(editPostId)
+        }
+    }
+    LaunchedEffect(editPostId, store.detail.post) {
+        val post = store.detail.post
+        if (editPostId != null && !prefilled && post?.id == editPostId) {
+            title = post.title ?: ""
+            content = post.content
+            prefilled = true
+        }
+    }
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = "发帖", onBack = onBack)
+            DetailHeader(title = if (editPostId != null) "编辑帖子" else "发帖", onBack = onBack)
             CardColumn(Modifier.weight(1f).padding(16.dp)) {
                 OutlinedTextField(
                     value = title,
@@ -1057,11 +1171,16 @@ fun ForumComposeScreen(
             }
             Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.CenterEnd) {
                 ForumChip(
-                    label = "发布",
+                    label = if (editPostId != null) "保存" else "发布",
                     selected = true,
                     onClick = {
-                        if (!isLoggedIn) onLoginRequired()
-                        else store.createPost(title, content, emptyList()) { onPosted(it) }
+                        if (!isLoggedIn) {
+                            onLoginRequired()
+                        } else if (editPostId != null) {
+                            store.updatePost(editPostId, title, content) { onPosted(editPostId) }
+                        } else {
+                            store.createPost(title, content, emptyList()) { onPosted(it) }
+                        }
                     },
                 )
             }

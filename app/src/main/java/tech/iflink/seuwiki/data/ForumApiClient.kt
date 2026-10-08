@@ -34,9 +34,12 @@ import tech.iflink.seuwiki.models.HandbookSectionPage
 import tech.iflink.seuwiki.models.HandbookSourcePost
 import tech.iflink.seuwiki.models.SuggestedTopic
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 
 /**
  * `forum.seu.wiki` 的 API 客户端 —— **与 App 现有登录共用同一个 Logto 会话**。
@@ -63,14 +66,15 @@ import java.net.URLEncoder
  * 带上 Bearer 就整段豁免 —— 所以这个头不是"登录了才加"，是**所有请求都要带**。
  *
  * 同理本客户端**从不读写 Cookie**（契约明确要求非浏览器集成不得携带 Cookie）。
- * `HttpURLConnection` 默认不启用 CookieHandler，本工程也没有全局设置过，
- * 所以天然满足。
+ * OkHttp 默认不带 CookieJar，天然满足。
  *
  * ## 依赖选择
  *
- * 与 [FeedApiClient] 同款：手写 `HttpURLConnection` + kotlinx.serialization，
- * 不引入 Retrofit / OkHttp。所有方法都是阻塞 I/O，调用方负责切到 IO 线程
- * （见 [ForumStore]）。
+ * OkHttp + kotlinx.serialization，不引入 Retrofit。最初用的是手写
+ * `HttpURLConnection`，但它的 `setRequestMethod` 白名单没有 PATCH
+ * （JVM 与 Android 都抛 `ProtocolException`；JDK 17 起反射绕法也被
+ * 模块封装挡死），编辑帖子需要 PATCH，因此迁到 OkHttp。
+ * 所有方法都是阻塞 I/O，调用方负责切到 IO 线程（见 [ForumStore]）。
  */
 class ForumApiClient(
     private val baseUrl: String = DefaultBaseUrl,
@@ -290,6 +294,39 @@ class ForumApiClient(
     }
 
     /**
+     * `PATCH /api/posts/{id}` —— 作者编辑自己的帖子。
+     *
+     * body 白名单只有 `title`/`content` 两个 key（`posts/[id]/route.ts` 的
+     * PATCH），标签不可改；`title` 省略或空串都会被后端存成 null，
+     * 所以这里沿用发帖的「空标题不带 key」约定。`content` 后端强制非空。
+     * 返回的是更新后的 posts 整行，客户端用不上，统一刷新详情即可。
+     */
+    suspend fun updatePost(postId: String, title: String?, content: String) {
+        val body = buildJsonObject {
+            put("content", content)
+            title?.takeIf { it.isNotBlank() }?.let { put("title", it.trim()) }
+        }
+        send<JsonObject>("PATCH", "/api/posts/${encode(postId)}", body)
+    }
+
+    /**
+     * `DELETE /api/admin/content/{targetType}/{targetId}` —— 管理删除，
+     * 需要 `admin:content:delete` 能力（owner/admin/moderator）。
+     *
+     * 与作者自删的差别：路由不同、confirmation 字面量必须是 `admin_delete`、
+     * 服务端写 `admin_delete` 审计。Idempotency-Key 可省略（缺省时服务端
+     * 自己生成，`readIdempotencyKey` 允许 null）。
+     */
+    suspend fun adminDeleteContent(targetType: ForumTargetType, targetId: String) {
+        val body = buildJsonObject { put("confirmation", "admin_delete") }
+        send<JsonObject>(
+            "DELETE",
+            "/api/admin/content/${targetType.key}/${encode(targetId)}",
+            body,
+        )
+    }
+
+    /**
      * 把服务端的相对资源路径拼成可直接加载的绝对 URL。
      *
      * `post_assets.asset_url` 与上传返回的 `path` 都是 `/api/media/...` 形式
@@ -494,30 +531,21 @@ class ForumApiClient(
         body: JsonObject?,
     ): T {
         val token = tokenProvider?.invoke()
-        val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 10_000
-            readTimeout = 15_000
-            setRequestProperty("Accept", "application/json")
-            if (token != null) setRequestProperty("Authorization", "Bearer $token")
-            if (body != null) {
-                doOutput = true
-                // 后端对非 application/json 直接 415（`api/same-origin-json.mjs:26-28`）。
-                setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            }
-        }
-        try {
-            if (body != null) {
-                connection.outputStream.use { it.write(json.encodeToString(body).toByteArray(Charsets.UTF_8)) }
-            }
-            val status = connection.responseCode
-            val text = (if (status in 200..299) connection.inputStream else connection.errorStream)
-                ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
-                .orEmpty()
-            if (status !in 200..299) throw parseError(status, text)
+        val builder = Request.Builder()
+            .url(baseUrl + path)
+            .header("Accept", "application/json")
+        if (token != null) builder.header("Authorization", "Bearer $token")
+        // 后端对非 application/json 直接 415（`api/same-origin-json.mjs:26-28`）。
+        val requestBody = body?.let {
+            json.encodeToString(it).toRequestBody(JsonMediaType)
+        } ?: EmptyBody.takeIf { method == "POST" || method == "PUT" || method == "PATCH" }
+        // OkHttp 的 method() 不做白名单校验，PATCH/带 body 的 DELETE 都合法；
+        // 但 POST/PUT/PATCH 强制要有 body，无 body 的写操作补一个空 body。
+        builder.method(method, requestBody)
+        SharedHttpClient.newCall(builder.build()).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw parseError(response.code, text)
             return json.decodeFromString(text)
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -565,6 +593,20 @@ class ForumApiClient(
     companion object {
         const val DefaultBaseUrl = "https://forum.seu.wiki"
         const val PageSize = 20
+
+        private val JsonMediaType = "application/json; charset=utf-8".toMediaType()
+
+        /** 无 body 的 POST 也要占一个空 body（OkHttp 硬性要求），Content-Length: 0。 */
+        private val EmptyBody = ByteArray(0).toRequestBody(null, 0, 0)
+
+        /**
+         * 共享的 OkHttpClient：连接池/线程池全局一份。默认无 CookieJar，
+         * 即「从不读写 Cookie」的契约由实现保证（见类注释）。
+         */
+        private val SharedHttpClient: OkHttpClient = OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
+            .build()
 
         /**
          * 把服务端的相对资源路径拼成可直接加载的绝对 URL。

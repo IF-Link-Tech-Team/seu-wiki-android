@@ -132,6 +132,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.coil.compose)
+    implementation(libs.okhttp)
 
     // 自检套件：与 iOS 的 SelfCheck.swift 对齐的关键纯逻辑断言。
     // Robolectric 是必需的——Format/CampusHtml/Routes 都碰 Compose 与

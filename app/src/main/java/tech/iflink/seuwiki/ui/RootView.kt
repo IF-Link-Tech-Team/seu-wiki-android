@@ -133,6 +133,7 @@ object Routes {
     const val TOOL_GPA = "tools/gpa"
     const val TOOL_PLACEHOLDER = "tools/other/{id}"
     const val FORUM_COMPOSE = "forum/compose"
+    const val FORUM_EDIT = "forum/edit/{id}"
     const val FORUM_BOOKMARKS = "forum/bookmarks"
 
     /**
@@ -163,6 +164,7 @@ object Routes {
 
     fun feedDetail(id: String) = "feed/detail/${seg(id)}"
     fun forumDetail(id: String) = "forum/detail/${seg(id)}"
+    fun forumEdit(id: String) = "forum/edit/${seg(id)}"
     fun topicDetail(slug: String) = "forum/topic/${seg(slug)}"
 
     /** 手册板块详情。[name] 是列表页带来的板块名，详情返回前标题栏先显示它。 */
@@ -402,6 +404,9 @@ fun RootView(
                     onOpenHandbookArticle = { id ->
                         navController.navigate(Routes.handbookArticle(id))
                     },
+                    onEditPost = { id ->
+                        navController.navigate(Routes.forumEdit(id))
+                    },
                 )
             }
             // 话题页 = 按 tag slug 过滤的帖子列表。后端没有 /api/tags，
@@ -445,6 +450,23 @@ fun RootView(
                         navController.popBackStack()
                         navController.navigate(Routes.forumDetail(id))
                     },
+                )
+            }
+            // 编辑帖：复用发帖页，editPostId 触发预填 + PATCH。
+            // 保存后 popBackStack 回详情 —— detail 状态已被 store.updatePost 刷新，
+            // 不需要再 navigate 一次制造重复栈。
+            composable(
+                route = Routes.FORUM_EDIT,
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) { entry ->
+                val editId = Routes.decode(entry.arguments?.getString("id"))
+                ForumComposeScreen(
+                    store = forumStore,
+                    isLoggedIn = auth.isLoggedIn,
+                    onBack = { navController.popBackStack() },
+                    onLoginRequired = launchLogin,
+                    onPosted = { navController.popBackStack() },
+                    editPostId = editId,
                 )
             }
             // 手册板块详情：{id} 即板块的 tag slug；{name} 是列表页带来的占位标题。

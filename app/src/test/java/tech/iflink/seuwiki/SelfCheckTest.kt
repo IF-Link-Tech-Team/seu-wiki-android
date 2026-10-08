@@ -877,6 +877,48 @@ class SelfCheckTest {
     }
 
     @Test
+    fun `管理删除走 admin 路由且 confirmation 是 admin_delete`() {
+        // admin/content 路由与作者自删是两个端点，confirmation 字面量也不同；
+        // 用错路由会 404/401 而不是「删错东西」，但断言语义能防后续改混。
+        withLocalApi({ 200 to """{"deleted":true}""" }) { api ->
+            runBlocking {
+                ForumApiClient(baseUrl = api.baseUrl)
+                    .adminDeleteContent(ForumTargetType.Comment, "cid")
+            }
+            val req = requireNotNull(api.last)
+            assertEquals("DELETE", req.method)
+            assertEquals("/api/admin/content/comment/cid", req.path)
+            assertTrue(
+                "confirmation 必须是 admin_delete",
+                requireNotNull(req.body).contains(""""admin_delete""""),
+            )
+            assertFalse("不能混用作者自删的确认串", req.body!!.contains("delete_owned_content"))
+        }
+    }
+
+    @Test
+    fun `编辑帖子 body 白名单只有 title 与 content`() {
+        // posts/[id]/route.ts 的 PATCH：多一个 key 就 400 INVALID_BODY；
+        // 标签不可改，客户端永远不带 tags。
+        withLocalApi({ 200 to """{"post":{"id":"abc"}}""" }) { api ->
+            runBlocking {
+                ForumApiClient(baseUrl = api.baseUrl).updatePost("abc", "新标题", "新正文")
+            }
+            val req = requireNotNull(api.last)
+            assertEquals("PATCH", req.method)
+            assertEquals("/api/posts/abc", req.path)
+            val obj = kotlinx.serialization.json.Json.parseToJsonElement(requireNotNull(req.body))
+                .let { it as kotlinx.serialization.json.JsonObject }
+            assertEquals(setOf("content", "title"), obj.keys.toSet())
+        }
+        // 空标题不带 key（后端会把 title 存成 null，语义一致）。
+        withLocalApi({ 200 to """{"post":{"id":"abc"}}""" }) { api ->
+            runBlocking { ForumApiClient(baseUrl = api.baseUrl).updatePost("abc", "  ", "新正文") }
+            assertFalse("空标题不应进 body", requireNotNull(api.last?.body).contains("title"))
+        }
+    }
+
+    @Test
     fun `非 2xx 被解析成带错误码的异常`() {
         // 后端两种错误体形状：{error} 与 {error, message}，message 可能缺。
         withLocalApi({ 401 to """{"error":"UNAUTHORIZED"}""" }) { api ->

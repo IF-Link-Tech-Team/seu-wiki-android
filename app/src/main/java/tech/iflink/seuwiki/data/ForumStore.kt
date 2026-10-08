@@ -607,11 +607,63 @@ class ForumStore(
             runCatching { withContext(Dispatchers.IO) { client.deleteContent(type, id) } }
                 .onSuccess {
                     _toast.value = "已删除"
+                    invalidateFeeds()
                     onDone()
                 }
                 .onFailure { e -> _toast.value = describe(e) }
         }
     }
+
+    /**
+     * 作者编辑自己的帖子。成功后刷新详情与信息流 —— 标题变了列表卡片也要变。
+     * 标签后端不让改，这里不暴露。
+     */
+    fun updatePost(postId: String, title: String?, content: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.updatePost(postId, title, content) } }
+                .onSuccess {
+                    _toast.value = "已保存"
+                    loadDetail(postId)
+                    invalidateFeeds()
+                    onDone()
+                }
+                .onFailure { e ->
+                    _toast.value = when ((e as? ForumApiException)?.errorCode) {
+                        "UNAUTHORIZED" -> "登录后才能编辑"
+                        "FORBIDDEN" -> "只能编辑自己的帖子"
+                        "INVALID_BODY" -> "内容格式不对"
+                        else -> describe(e)
+                    }
+                }
+        }
+    }
+
+    /**
+     * 管理删除（owner/admin/moderator，能力 `admin:content:delete`）。
+     * 入口可见性由 UI 按 viewer.capabilities 控制，真正的门禁在服务端 ——
+     * 越权调用只会吃到 403，不会出事。
+     */
+    fun adminDeleteContent(type: ForumTargetType, id: String, onDone: () -> Unit) {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.adminDeleteContent(type, id) } }
+                .onSuccess {
+                    _toast.value = "已删除（管理操作）"
+                    invalidateFeeds()
+                    onDone()
+                }
+                .onFailure { e ->
+                    _toast.value = when ((e as? ForumApiException)?.errorCode) {
+                        "UNAUTHORIZED" -> "登录后才能进行这个操作"
+                        "FORBIDDEN" -> "没有内容管理权限"
+                        else -> describe(e)
+                    }
+                }
+        }
+    }
+
+    /** 当前登录用户在论坛侧是否持有某个管理能力。未登录/未拉到 viewer 时一律 false。 */
+    fun hasCapability(capability: String): Boolean =
+        _viewer.value?.capabilities?.contains(capability) == true
 
     // MARK: - 收藏
 
