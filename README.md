@@ -51,9 +51,9 @@ app/src/main/java/tech/iflink/seuwiki/
 
 ### 1. 生产路径不许有 Mock
 
-资讯走 `seu.wiki` 的 `/api/site/*`；社区（帖子、热榜、关注流、东大生存手册、论坛搜索）
-全部接论坛后端 **`https://forum.seu.wiki`**，与 App 登录共用同一个 Logto 会话
-（`Authorization: Bearer`，不存在第二次登录）。后端没返回的字段
+资讯走 `seu.wiki` 的 `/api/site/*`；社区（帖子、热榜、关注流、东大生存手册、论坛搜索、
+通知、发帖配图上传、编辑/管理删除）全部接论坛后端 **`https://forum.seu.wiki`**，与 App
+登录共用同一个 Logto 会话（`Authorization: Bearer`，不存在第二次登录）。后端没返回的字段
 （`campus` / `audience` / `deadline`）就**不编造默认值**，对应筛选项显式置灰。
 未接通的功能显式标注「即将推出」或直接隐藏。
 
@@ -102,7 +102,7 @@ iOS 用 SwiftUI 原生控件，本端用 Material 原生控件 —— 同一个�
 
 ## 自检
 
-`app/src/test/java/tech/iflink/seuwiki/SelfCheckTest.kt`，75 条用例，**每一条都真的打生产代码**。
+`app/src/test/java/tech/iflink/seuwiki/SelfCheckTest.kt`，80+ 条用例，**每一条都真的打生产代码**。
 
 它抓到过几个代码审查看不出来的 bug：日期解析（后端混用带时刻、只有日期、6 位微秒
 三种格式）、分页合并去重、HTML 实体与段落粘连、slug 的 `%2F` 编码（不编码直接 404）、
