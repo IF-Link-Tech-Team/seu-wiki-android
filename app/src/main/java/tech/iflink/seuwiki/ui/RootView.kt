@@ -227,6 +227,14 @@ fun RootView(
     val searchStore: SearchStore = viewModel(factory = SearchStore.factory { auth.accessToken() })
     // 论坛里任何需要登录的动作（点赞/评论/发帖）都走这个回调，与个人页同一个登录流程。
     val launchLogin: () -> Unit = { auth.launchSignIn(context) }
+
+    // 登录态统一接线（见 AGENTS.md）：登录→各功能 store 拉取用户态；登出→清空用户数据。
+    // 门禁一律只看 AuthStore.isLoggedIn（本地会话），401 只是校正信号，永不直接跳登录。
+    // LaunchedEffect 首帧即执行，天然覆盖「冷启动时已是登录态」的场景。
+    LaunchedEffect(auth.isLoggedIn) {
+        if (auth.isLoggedIn) forumStore.onSignedIn() else forumStore.onSignedOut()
+    }
+
     val navController = rememberNavController()
 
     // 冷启动对账：补回被系统清掉的闹钟、撤掉已删除的提醒。
@@ -388,6 +396,7 @@ fun RootView(
                 ForumPostDetailScreen(
                     store = forumStore,
                     postId = Routes.decode(entry.arguments?.getString("id")),
+                    isLoggedIn = auth.isLoggedIn,
                     onBack = { navController.popBackStack() },
                     onLoginRequired = launchLogin,
                     onOpenHandbookArticle = { id ->
@@ -428,6 +437,7 @@ fun RootView(
             composable(Routes.FORUM_COMPOSE) {
                 ForumComposeScreen(
                     store = forumStore,
+                    isLoggedIn = auth.isLoggedIn,
                     onBack = { navController.popBackStack() },
                     onLoginRequired = launchLogin,
                     onPosted = { id ->

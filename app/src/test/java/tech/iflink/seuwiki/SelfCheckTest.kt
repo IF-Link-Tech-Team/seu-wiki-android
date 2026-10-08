@@ -1343,4 +1343,81 @@ class SelfCheckTest {
         assertNotNull("子标签也要能查", TopicCatalog.nameForSlug("baoyan-jingyan"))
         assertNull("未知 slug 返回 null 而不是乱兜", TopicCatalog.nameForSlug("不存在的"))
     }
+
+    // MARK: - 账号体系（登录态单一事实源）
+
+    @Test
+    fun `登录钩子拉取身份 登出钩子清空用户态`() {
+        // v0.3.1 账号重构的核心行为锁。曾经的死循环：UI 拿 store.viewer 当
+        // 登录门禁，而 refreshViewer() 全工程零调用，viewer 永为 null。
+        // 重构后：登录 → RootView 统一调 onSignedIn()（必须真的去问 /api/me）；
+        // 登出 → onSignedOut() 把上一个账号的投影洗干净，防串号。
+        val meJson = """{"isAuthenticated":true,"viewer":{"id":"u1","displayName":"梁","username":"liangyufan","forumRole":"owner"}}"""
+        val paths = mutableListOf<String>()
+        withLocalApi({ req ->
+            paths += req.path
+            if (req.path == "/api/me") 200 to meJson else 200 to """{"posts":[],"next_cursor":null}"""
+        }) { api ->
+            val store = ForumStore(
+                ForumApiClient(baseUrl = api.baseUrl, tokenProvider = { "app-token" }),
+            )
+            assertNull("还没触发登录钩子时不该有 viewer", store.viewer)
+
+            store.onSignedIn()
+            waitForStore { store.viewerLoaded }
+
+            assertTrue("onSignedIn 必须触发 /api/me，实际请求过：$paths", "/api/me" in paths)
+            val viewer = requireNotNull(store.viewer) { "onSignedIn 后 viewer 必须就位" }
+            assertEquals("u1", viewer.id)
+            assertEquals("owner", viewer.forumRole)
+
+            store.onSignedOut()
+            assertNull("onSignedOut 必须清掉 viewer", store.viewer)
+            assertFalse("onSignedOut 后 viewerLoaded 要复位", store.viewerLoaded)
+            assertFalse("收藏状态要复位成未加载", store.bookmarks.hasLoaded)
+            assertTrue("关注的板块必须清空", store.followedTags.isEmpty())
+        }
+    }
+
+    /** viewModelScope 走 Main → IO → Main，测试里反复榨干主线程队列直到条件满足。 */
+    private fun waitForStore(timeoutMs: Long = 5_000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition() && System.currentTimeMillis() < deadline) {
+            org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+            Thread.sleep(10)
+        }
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+    }
+
+    @Test
+    fun `论坛写操作门禁只看 isLoggedIn 不看 viewer`() {
+        // 源码级回归锁：门禁的事实源只能是 AuthStore.isLoggedIn（本地会话），
+        // viewer 是服务端投影，只做展示/自检，绝不能再当门禁用。
+        val root = File("src/main/java/tech/iflink/seuwiki")
+        val screens = File(root, "ui/forum/ForumScreens.kt").readText(Charsets.UTF_8)
+        assertFalse(
+            "UI 层不得再拿 store.viewer 当门禁（viewer 可能根本没拉过，这正是死循环根因）",
+            screens.contains("store.viewer == null"),
+        )
+        assertTrue(
+            "发帖/点赞/收藏/评论的门禁必须看 isLoggedIn",
+            screens.contains("if (!isLoggedIn) onLoginRequired()"),
+        )
+
+        val rootView = File(root, "ui/RootView.kt").readText(Charsets.UTF_8)
+        assertTrue(
+            "登录态变化必须统一驱动论坛 store 的钩子",
+            Regex("""LaunchedEffect\(auth\.isLoggedIn\)""").containsMatchIn(rootView),
+        )
+        assertTrue("登录要调 forumStore.onSignedIn()", rootView.contains("forumStore.onSignedIn()"))
+        assertTrue("登出要调 forumStore.onSignedOut()", rootView.contains("forumStore.onSignedOut()"))
+        assertTrue(
+            "详情页与发帖页都必须拿到真登录态",
+            Regex("""isLoggedIn = auth\.isLoggedIn""").findAll(rootView).count() >= 2,
+        )
+
+        val storeSrc = File(root, "data/ForumStore.kt").readText(Charsets.UTF_8)
+        assertTrue("ForumStore 必须实现 onSignedIn()", storeSrc.contains("fun onSignedIn()"))
+        assertTrue("ForumStore 必须实现 onSignedOut()", storeSrc.contains("fun onSignedOut()"))
+    }
 }

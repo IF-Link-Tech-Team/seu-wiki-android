@@ -794,6 +794,7 @@ private fun StatGlyph(icon: String, count: Int) {
 fun ForumPostDetailScreen(
     store: ForumStore,
     postId: String,
+    isLoggedIn: Boolean,
     onBack: () -> Unit,
     onLoginRequired: () -> Unit,
     onOpenHandbookArticle: (String) -> Unit = {},
@@ -866,14 +867,14 @@ fun ForumPostDetailScreen(
                                 label = if (post.likedByMe) "已赞" else "赞 ${post.likesCount}",
                                 selected = post.likedByMe,
                                 onClick = {
-                                    if (store.viewer == null) onLoginRequired() else store.toggleLike(post.id)
+                                    if (!isLoggedIn) onLoginRequired() else store.toggleLike(post.id)
                                 },
                             )
                             ForumChip(
                                 label = if (post.bookmarked) "已收藏" else "收藏",
                                 selected = post.bookmarked,
                                 onClick = {
-                                    if (store.viewer == null) onLoginRequired() else store.toggleBookmark(post.id)
+                                    if (!isLoggedIn) onLoginRequired() else store.toggleBookmark(post.id)
                                 },
                             )
                             Spacer(Modifier.weight(1f))
@@ -983,7 +984,7 @@ fun ForumPostDetailScreen(
                         label = if (state.isSendingComment) "发送中…" else "发送",
                         selected = true,
                         onClick = {
-                            if (store.viewer == null) {
+                            if (!isLoggedIn) {
                                 onLoginRequired()
                             } else {
                                 store.sendComment(post.id, commentDraft) { commentDraft = "" }
@@ -1000,6 +1001,7 @@ fun ForumPostDetailScreen(
 @Composable
 fun ForumComposeScreen(
     store: ForumStore,
+    isLoggedIn: Boolean,
     onBack: () -> Unit,
     onLoginRequired: () -> Unit,
     onPosted: (String) -> Unit,
@@ -1033,7 +1035,7 @@ fun ForumComposeScreen(
                     label = "发布",
                     selected = true,
                     onClick = {
-                        if (store.viewer == null) onLoginRequired()
+                        if (!isLoggedIn) onLoginRequired()
                         else store.createPost(title, content, emptyList()) { onPosted(it) }
                     },
                 )

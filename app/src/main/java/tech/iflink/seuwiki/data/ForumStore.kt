@@ -681,6 +681,46 @@ class ForumStore(
         }
     }
 
+    // MARK: - 登录态生命周期（由 RootView 的统一监听调用，约定见仓库 AGENTS.md）
+
+    /**
+     * 登录成功（含冷启动时已有会话）后调用：拉取论坛侧身份投影；
+     * 已加载过的用户态数据顺带刷新，让新账号看到自己的能力与内容。
+     */
+    fun onSignedIn() {
+        refreshViewer()
+        if (_bookmarks.value.hasLoaded) refreshBookmarks()
+        if (_following.value.hasLoaded) refreshFollowing()
+        if (_followsLoaded.value) loadFollows()
+    }
+
+    /**
+     * 登出后调用：清空**全部**用户态数据（viewer、收藏、关注流、关注的标签），
+     * 防止下一个账号看到上一个账号的残留。公共信息流（最新/热榜/手册）匿名可读，
+     * 列表本身保留，但帖子上带的 `likedByMe`/`bookmarked` 是上一个账号的视角，
+     * 必须一并洗掉。
+     */
+    fun onSignedOut() {
+        _viewer.value = null
+        _viewerLoaded.value = false
+        _bookmarks.value = BookmarkState()
+        _following.value = ListState()
+        followingGeneration++
+        _followedTags.value = emptyList()
+        _suggestedTags.value = emptyList()
+        _followsLoaded.value = false
+        listOf(_list, _hot).forEach { state ->
+            state.value = state.value.copy(
+                posts = state.value.posts.map { it.copy(likedByMe = false, bookmarked = false) },
+            )
+        }
+        _detail.value.post?.let { post ->
+            _detail.value = _detail.value.copy(
+                post = post.copy(likedByMe = false, bookmarked = false),
+            )
+        }
+    }
+
     fun consumeToast() {
         _toast.value = null
     }
