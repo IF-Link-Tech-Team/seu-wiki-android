@@ -32,8 +32,10 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -49,6 +51,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
@@ -1118,7 +1122,20 @@ fun ForumPostDetailScreen(
     }
 }
 
-/** 发帖页。[editPostId] 非空时为编辑模式：预填现有标题/正文，提交走 PATCH。 */
+/** 待上传配图：相册选图后统一转 JPEG（后端只收 jpeg/png/webp，相册常是 HEIC/其他）。 */
+private data class PendingComposerImage(
+    val bytes: ByteArray,
+    val preview: android.graphics.Bitmap,
+)
+
+/**
+ * 发帖页（豆瓣式专业论坛布局）。
+ *
+ * 顶栏 = 返回 / 板块选择胶囊（编辑模式隐藏，后端不让改标签）/ 发布胶囊；
+ * 标题单行 + 通栏正文，无卡片边框；底部工具栏（图片、#板块）贴键盘上方。
+ * [editPostId] 非空时为编辑模式：预填现有标题/正文，提交走 PATCH。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ForumComposeScreen(
     store: ForumStore,
@@ -1132,6 +1149,19 @@ fun ForumComposeScreen(
     var title by remember(editPostId) { mutableStateOf("") }
     var content by remember(editPostId) { mutableStateOf("") }
     var prefilled by remember(editPostId) { mutableStateOf(editPostId == null) }
+    var selectedSlugs by remember(editPostId) { mutableStateOf(listOf<String>()) }
+    var pendingImages by remember(editPostId) { mutableStateOf(listOf<PendingComposerImage>()) }
+    var showTagSheet by remember(editPostId) { mutableStateOf(false) }
+
+    val context = LocalContext.current
+    val pickImages = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.GetMultipleContents(),
+    ) { uris ->
+        val remaining = (9 - pendingImages.size).coerceAtLeast(0)
+        uris.take(remaining).forEach { uri ->
+            compressComposerImage(context, uri)?.let { pendingImages = pendingImages + it }
+        }
+    }
 
     // 编辑模式从详情缓存预填 —— 入口就是详情页的「编辑」按钮，detail 已在内存里；
     // 万一没有（深链接进来）就拉一次。
@@ -1149,43 +1179,284 @@ fun ForumComposeScreen(
         }
     }
 
+    val canPublish = content.trim().isNotEmpty() && content.trim().length <= 20_000
+
+    val tagPickerTitle = if (selectedSlugs.isEmpty()) {
+        "选择板块"
+    } else {
+        TopicCatalog.topics
+            .flatMap { t -> listOf(t.slug to t.name) + t.subtags.map { it.slug to it.name } }
+            .filter { selectedSlugs.contains(it.first) }
+            .joinToString(" · ") { it.second }
+    }
+
+    fun publish() {
+        if (!isLoggedIn) {
+            onLoginRequired()
+            return
+        }
+        val images = pendingImages.map { it.bytes }
+        if (editPostId != null) {
+            store.updatePost(editPostId, title, content, images) { onPosted(editPostId) }
+        } else {
+            store.createPost(title, content, selectedSlugs, images) { onPosted(it) }
+        }
+    }
+
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            DetailHeader(title = if (editPostId != null) "编辑帖子" else "发帖", onBack = onBack)
-            CardColumn(Modifier.weight(1f).padding(16.dp)) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("标题（可不填）", style = SeuType.Body) },
-                    singleLine = true,
-                )
-                VSpace(12.dp)
-                OutlinedTextField(
-                    value = content,
-                    onValueChange = { content = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("说点什么…", style = SeuType.Body) },
-                    maxLines = 12,
+            // 顶栏：返回 / 板块胶囊 / 发布。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = SeuIcons.of("chevron.left"),
+                        contentDescription = "取消",
+                        tint = colors.label,
+                    )
+                }
+                Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    if (editPostId == null) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp),
+                            modifier = Modifier
+                                .clip(CircleShape)
+                                .background(colors.tertiaryFill)
+                                .clickable { showTagSheet = true }
+                                .padding(horizontal = 12.dp, vertical = 7.dp),
+                        ) {
+                            Icon(
+                                imageVector = SeuIcons.of(if (selectedSlugs.isEmpty()) "plus" else "number"),
+                                contentDescription = null,
+                                tint = colors.label,
+                                modifier = Modifier.size(13.dp),
+                            )
+                            Text(
+                                tagPickerTitle,
+                                style = SeuType.Subheadline,
+                                color = colors.label,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    } else {
+                        Text("编辑帖子", style = SeuType.Headline, color = colors.label)
+                    }
+                }
+                val publishEnabled = canPublish
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(if (publishEnabled) colors.accent else colors.tertiaryFill)
+                        .clickable(enabled = publishEnabled) { publish() }
+                        .padding(horizontal = 16.dp, vertical = 7.dp),
+                ) {
+                    Text(
+                        if (editPostId != null) "保存" else "发布",
+                        style = SeuType.SubheadlineMedium,
+                        color = if (publishEnabled) colors.onAccentInverted else colors.secondaryLabel,
+                    )
+                }
+            }
+
+            // 标题：单行通栏，靠分隔线分区。
+            OutlinedTextField(
+                value = title,
+                onValueChange = { if (it.length <= 160) title = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text("标题（可不填）", style = SeuType.Title3) },
+                textStyle = SeuType.Title3.copy(color = colors.label),
+                singleLine = true,
+                colors = composerFieldColors(),
+                shape = RectangleShape,
+            )
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 20.dp),
+                color = colors.separator,
+            )
+
+            // 正文：占满剩余空间。
+            OutlinedTextField(
+                value = content,
+                onValueChange = { content = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f),
+                placeholder = { Text("此刻你想要分享…", style = SeuType.Body) },
+                textStyle = SeuType.Body.copy(color = colors.label),
+                colors = composerFieldColors(),
+                shape = RectangleShape,
+            )
+
+            if (content.length > 20_000) {
+                Text(
+                    "超出 ${content.length - 20_000} 字（上限 20000 字）",
+                    style = SeuType.Footnote,
+                    color = colors.red,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
                 )
             }
-            Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.CenterEnd) {
-                ForumChip(
-                    label = if (editPostId != null) "保存" else "发布",
-                    selected = true,
-                    onClick = {
-                        if (!isLoggedIn) {
-                            onLoginRequired()
-                        } else if (editPostId != null) {
-                            store.updatePost(editPostId, title, content) { onPosted(editPostId) }
-                        } else {
-                            store.createPost(title, content, emptyList()) { onPosted(it) }
+
+            // 待上传配图：可单张移除。
+            if (pendingImages.isNotEmpty()) {
+                androidx.compose.foundation.lazy.LazyRow(
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(pendingImages.size) { index ->
+                        val image = pendingImages[index]
+                        Box {
+                            androidx.compose.foundation.Image(
+                                bitmap = image.preview.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier
+                                    .size(72.dp)
+                                    .clip(RoundedCornerShape(8.dp)),
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            )
+                            Icon(
+                                imageVector = SeuIcons.of("xmark"),
+                                contentDescription = "移除图片",
+                                tint = Color.White,
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(2.dp)
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Black.copy(alpha = 0.45f))
+                                    .clickable {
+                                        pendingImages = pendingImages.toMutableList()
+                                            .also { it.removeAt(index) }
+                                    }
+                                    .padding(2.dp),
+                            )
                         }
-                    },
-                )
+                    }
+                }
+            }
+
+            // 底部工具栏：图片 / #板块。
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(colors.groupedBackground)
+                    .navigationBarsPadding()
+                    .imePadding()
+                    .padding(horizontal = 24.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(28.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                androidx.compose.material3.IconButton(
+                    onClick = { pickImages.launch("image/*") },
+                ) {
+                    Icon(
+                        imageVector = SeuIcons.of("photo"),
+                        contentDescription = "添加图片",
+                        tint = colors.label,
+                    )
+                }
+                if (editPostId == null) {
+                    androidx.compose.material3.IconButton(onClick = { showTagSheet = true }) {
+                        Icon(
+                            imageVector = SeuIcons.of("number"),
+                            contentDescription = "选择板块",
+                            tint = colors.label,
+                        )
+                    }
+                }
             }
         }
     }
+
+    if (showTagSheet) {
+        androidx.compose.material3.ModalBottomSheet(
+            onDismissRequest = { showTagSheet = false },
+        ) {
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                Text(
+                    "选择板块（最多 3 个）",
+                    style = SeuType.Headline,
+                    color = colors.label,
+                )
+                VSpace(12.dp)
+                TopicCatalog.topics.forEach { topic ->
+                    Text(topic.name, style = SeuType.SubheadlineMedium, color = colors.secondaryLabel)
+                    VSpace(8.dp)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val tags = listOf(topic.slug to topic.name) +
+                            topic.subtags.map { it.slug to it.name }
+                        tags.forEach { (slug, name) ->
+                            val selected = selectedSlugs.contains(slug)
+                            ForumChip(
+                                label = name,
+                                selected = selected,
+                                onClick = {
+                                    selectedSlugs = if (selected) {
+                                        selectedSlugs - slug
+                                    } else if (selectedSlugs.size < 3) {
+                                        selectedSlugs + slug
+                                    } else {
+                                        selectedSlugs
+                                    }
+                                },
+                            )
+                        }
+                    }
+                    VSpace(16.dp)
+                }
+                VSpace(24.dp)
+            }
+        }
+    }
+}
+
+/** 无边框透明底输入框配色（标题/正文共用）。 */
+@Composable
+private fun composerFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedContainerColor = Color.Transparent,
+    unfocusedContainerColor = Color.Transparent,
+    focusedBorderColor = Color.Transparent,
+    unfocusedBorderColor = Color.Transparent,
+    cursorColor = SeuTheme.colors.accent,
+)
+
+/**
+ * 相册图片 → JPEG 字节：先缩到长边 2048，再逐级降质直到 ≤5MB
+ * （后端 `POST_IMAGE_MAX_BYTES`）；转换失败返回 null 直接跳过。
+ */
+private fun compressComposerImage(
+    context: android.content.Context,
+    uri: android.net.Uri,
+    maxBytes: Int = 5 * 1024 * 1024,
+): PendingComposerImage? {
+    val bitmap = runCatching {
+        context.contentResolver.openInputStream(uri)?.use {
+            android.graphics.BitmapFactory.decodeStream(it)
+        }
+    }.getOrNull() ?: return null
+    val longest = maxOf(bitmap.width, bitmap.height)
+    val scaled = if (longest <= 2048) {
+        bitmap
+    } else {
+        val scale = 2048f / longest
+        android.graphics.Bitmap.createScaledBitmap(
+            bitmap,
+            (bitmap.width * scale).toInt().coerceAtLeast(1),
+            (bitmap.height * scale).toInt().coerceAtLeast(1),
+            true,
+        )
+    }
+    for (quality in listOf(85, 70, 55, 40)) {
+        val out = java.io.ByteArrayOutputStream()
+        scaled.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, out)
+        if (out.size() <= maxBytes) return PendingComposerImage(out.toByteArray(), scaled)
+    }
+    return null
 }
 
 /** 统一的大图标。 */

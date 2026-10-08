@@ -52,7 +52,9 @@ import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Percent
 import androidx.compose.material.icons.outlined.PeopleAlt
+import androidx.compose.material.icons.outlined.Numbers
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Restaurant
 import androidx.compose.material.icons.outlined.Schedule
@@ -169,6 +171,8 @@ object SeuIcons {
         "mappin" to Icons.Outlined.Place,
         "plus" to Icons.Outlined.Add,
         "plus.circle.fill" to Icons.Outlined.AddCircle,
+        "photo" to Icons.Outlined.PhotoLibrary,
+        "number" to Icons.Outlined.Numbers,
         "trash" to Icons.Outlined.Delete,
         "calendar.badge.checkmark" to Icons.Outlined.EventAvailable,
         "book.closed.fill" to Icons.AutoMirrored.Outlined.MenuBook,

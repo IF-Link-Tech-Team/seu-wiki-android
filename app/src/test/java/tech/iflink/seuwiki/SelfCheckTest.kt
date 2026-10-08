@@ -919,6 +919,32 @@ class SelfCheckTest {
     }
 
     @Test
+    fun `配图上传走 multipart 且字段齐全`() {
+        // upload-handler.mjs 要 purpose=post-image + postId + file 三件套，
+        // Content-Type 必须带 boundary（否则 415）；帖子必须已存在（顺序约束）。
+        withLocalApi({ 201 to """{"media":{"path":"/api/media/x.jpg"}}""" }) { api ->
+            runBlocking {
+                ForumApiClient(baseUrl = api.baseUrl, tokenProvider = { "tok" })
+                    .uploadPostImage("pid", byteArrayOf(1, 2, 3))
+            }
+            val req = requireNotNull(api.last)
+            assertEquals("POST", req.method)
+            assertEquals("/api/media/upload", req.path)
+            assertTrue(
+                "必须 multipart 且带 boundary",
+                req.contentType!!.startsWith("multipart/form-data; boundary="),
+            )
+            val body = requireNotNull(req.body)
+            assertTrue("purpose 字段", body.contains("name=\"purpose\""))
+            assertTrue("purpose=post-image", body.contains("post-image"))
+            assertTrue("postId 字段", body.contains("name=\"postId\""))
+            assertTrue("postId 值", body.contains("pid"))
+            assertTrue("file 字段", body.contains("name=\"file\""))
+            assertTrue("上传必须带 token", req.authorization == "Bearer tok")
+        }
+    }
+
+    @Test
     fun `非 2xx 被解析成带错误码的异常`() {
         // 后端两种错误体形状：{error} 与 {error, message}，message 可能缺。
         withLocalApi({ 401 to """{"error":"UNAUTHORIZED"}""" }) { api ->

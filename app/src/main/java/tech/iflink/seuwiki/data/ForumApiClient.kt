@@ -327,6 +327,41 @@ class ForumApiClient(
     }
 
     /**
+     * `POST /api/media/upload`（multipart/form-data）—— 给已存在的帖子传一张配图。
+     *
+     * 契约（`media/upload/route.ts` + `lib/media/upload-handler.mjs`）：
+     * - 字段：`file`（二进制）、`purpose=post-image`、`postId=<uuid>`；
+     * - 仅 jpeg/png/webp、单张 ≤5MB，服务端嗅探内容与声明类型必须一致；
+     * - 帖子必须已存在且当前用户是作者（顺序永远是先建帖/保存，再传图）；
+     * - 成功 201 `{media:{path, contentType, size, assetId}}`。
+     * Bearer token 豁免同源 CSRF 校验，原生端没有 Origin 也能传。
+     */
+    suspend fun uploadPostImage(postId: String, bytes: ByteArray, contentType: String = "image/jpeg") {
+        val token = tokenProvider?.invoke()
+            ?: throw ForumApiException(401, "UNAUTHORIZED", null)
+        val body = okhttp3.MultipartBody.Builder()
+            .setType(okhttp3.MultipartBody.FORM)
+            .addFormDataPart("purpose", "post-image")
+            .addFormDataPart("postId", postId)
+            .addFormDataPart(
+                "file",
+                "image.jpg",
+                bytes.toRequestBody(contentType.toMediaType()),
+            )
+            .build()
+        val request = Request.Builder()
+            .url("$baseUrl/api/media/upload")
+            .header("Accept", "application/json")
+            .header("Authorization", "Bearer $token")
+            .post(body)
+            .build()
+        SharedHttpClient.newCall(request).execute().use { response ->
+            val text = response.body?.string().orEmpty()
+            if (!response.isSuccessful) throw parseError(response.code, text)
+        }
+    }
+
+    /**
      * 把服务端的相对资源路径拼成可直接加载的绝对 URL。
      *
      * `post_assets.asset_url` 与上传返回的 `path` 都是 `/api/media/...` 形式

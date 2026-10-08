@@ -571,14 +571,30 @@ class ForumStore(
 
     // MARK: - 发帖
 
-    fun createPost(title: String?, content: String, tags: List<String>, onCreated: (String) -> Unit) {
+    fun createPost(
+        title: String?,
+        content: String,
+        tags: List<String>,
+        images: List<ByteArray> = emptyList(),
+        onCreated: (String) -> Unit,
+    ) {
         val body = content.trim()
         if (body.isEmpty()) {
             _toast.value = "内容不能为空"
             return
         }
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { client.createPost(title, body, tags) } }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val id = client.createPost(title, body, tags)
+                    // 顺序与 Web 端 PostEditor 一致：先建帖拿 id 再传图。
+                    // 图片失败不拦发帖 —— 帖已在，可再进编辑补传。
+                    images.forEach { bytes ->
+                        runCatching { client.uploadPostImage(id, bytes) }
+                    }
+                    id
+                }
+            }
                 .onSuccess { id ->
                     _toast.value = "发布成功"
                     invalidateFeeds()
@@ -618,9 +634,23 @@ class ForumStore(
      * 作者编辑自己的帖子。成功后刷新详情与信息流 —— 标题变了列表卡片也要变。
      * 标签后端不让改，这里不暴露。
      */
-    fun updatePost(postId: String, title: String?, content: String, onDone: () -> Unit) {
+    fun updatePost(
+        postId: String,
+        title: String?,
+        content: String,
+        images: List<ByteArray> = emptyList(),
+        onDone: () -> Unit,
+    ) {
         viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { client.updatePost(postId, title, content) } }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    client.updatePost(postId, title, content)
+                    // 新增配图：编辑模式同样先保存正文再传图，失败不拦。
+                    images.forEach { bytes ->
+                        runCatching { client.uploadPostImage(postId, bytes) }
+                    }
+                }
+            }
                 .onSuccess {
                     _toast.value = "已保存"
                     loadDetail(postId)
