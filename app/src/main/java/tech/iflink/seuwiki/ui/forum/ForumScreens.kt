@@ -30,9 +30,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -135,6 +137,7 @@ fun ForumPostListScreen(
  * 只有列表、没有页头 —— 给嵌在别人页头下面的场合用（经验页的「关注」分页就在
  * HorizontalPager 里，外面已经有 ScreenHeader 了，再套一层会出双页头）。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ForumPostList(
     store: ForumStore,
@@ -175,7 +178,13 @@ fun ForumPostList(
                     icon = { ForumGlyph(icon = "text.bubble", tint = SeuTheme.colors.tertiaryLabel) },
                     topPadding = 40.dp,
                 )
-                else -> LazyColumn(
+                else -> PullToRefreshBox(
+                    // 下拉真的重拉第一页（对齐资讯流的 PullToRefreshBox 用法）。
+                    isRefreshing = state.isLoading,
+                    onRefresh = { store.refresh(sort, tagSlug) },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
@@ -203,6 +212,7 @@ fun ForumPostList(
                         }
                     }
                 }
+                }
             }
         }
         ComposeFab(onCompose = onCompose)
@@ -218,6 +228,7 @@ fun ForumPostList(
  * 400 `INVALID_CURSOR`。headless：外面已有页头（经验页 pager / 主页查看全部的
  * DetailHeader），这里不叠。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ForumHotList(
     store: ForumStore,
@@ -254,7 +265,13 @@ fun ForumHotList(
                     icon = { ForumGlyph(icon = "flame.fill", tint = colors.tertiaryLabel) },
                     topPadding = 40.dp,
                 )
-                else -> LazyColumn(
+                else -> PullToRefreshBox(
+                    // 下拉真的重拉热榜第一页。
+                    isRefreshing = state.isLoading,
+                    onRefresh = { store.refreshHot() },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                LazyColumn(
                     state = listState,
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
@@ -280,6 +297,7 @@ fun ForumHotList(
                             ) { Text("加载中…", style = SeuType.Footnote, color = colors.secondaryLabel) }
                         }
                     }
+                }
                 }
             }
         }
@@ -316,7 +334,7 @@ fun ForumHotListScreen(
  * 3. **有关注、流为空** → 已关注板块卡 + 「还没有新帖」。
  * 4. 正常 → 已关注板块卡（点 chip 取关）+ 帖子流。
  */
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
 @Composable
 fun ForumFollowingList(
     store: ForumStore,
@@ -451,6 +469,12 @@ fun ForumFollowingList(
             LaunchedEffect(shouldLoadMore, state.nextCursor) {
                 if (shouldLoadMore && state.nextCursor != null) store.loadMoreFollowing()
             }
+            PullToRefreshBox(
+                // 下拉重拉关注流与关注目录。
+                isRefreshing = state.isLoading,
+                onRefresh = { store.refreshFollowing(); store.loadFollows() },
+                modifier = Modifier.fillMaxSize(),
+            ) {
             LazyColumn(
                 state = listState,
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = ListBottomPadding),
@@ -526,6 +550,7 @@ fun ForumFollowingList(
                         }
                     }
                 }
+            }
             }
         }
     }
