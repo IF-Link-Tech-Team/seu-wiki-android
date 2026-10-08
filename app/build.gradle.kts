@@ -104,6 +104,9 @@ android {
 
     buildFeatures {
         compose = true
+        // Analytics 需要 BuildConfig.DEBUG（DEBUG 构建不上报统计）与
+        // BuildConfig.VERSION_NAME（User-Agent 里的版本段）。
+        buildConfig = true
     }
 
     packaging {

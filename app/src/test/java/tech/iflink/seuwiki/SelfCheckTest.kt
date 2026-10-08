@@ -27,8 +27,14 @@ import tech.iflink.seuwiki.ui.profile.SEARCHABLE_OPTION_COUNT
 import tech.iflink.seuwiki.ui.profile.filterOptions
 import java.io.File
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.put
+import tech.iflink.seuwiki.data.AnalyticsClient
 import tech.iflink.seuwiki.data.ForumApiClient
 import tech.iflink.seuwiki.data.ForumStore
+import tech.iflink.seuwiki.data.Umami
 import tech.iflink.seuwiki.models.ForumAuthor
 import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumSort
@@ -586,6 +592,7 @@ class SelfCheckTest {
         val query: String?,
         val authorization: String?,
         val contentType: String?,
+        val userAgent: String?,
         val body: String?,
     )
 
@@ -678,6 +685,7 @@ class SelfCheckTest {
                 query = if (qIdx >= 0) target.substring(qIdx + 1) else null,
                 authorization = headers["authorization"],
                 contentType = headers["content-type"],
+                userAgent = headers["user-agent"],
                 body = body?.ifEmpty { null },
             )
 
@@ -1578,5 +1586,129 @@ class SelfCheckTest {
             assertEquals("登出后角标必须复位", 0, store.unreadCount)
             assertFalse("登出后通知列表复位成未加载", store.notifications.hasLoaded)
         }
+    }
+
+    // MARK: - Umami 统计契约
+
+    /**
+     * 与 iOS 端 SelfCheck.swift 语义对齐的一组断言：两端钉同一份采集契约
+     * （website id、hostname、type、url/title 字段），谁改坏了另一端也该知道。
+     */
+
+    @Test
+    fun `Umami 屏幕浏览 payload 与采集契约一致`() {
+        val payload = Umami.buildScreenViewPayload(
+            url = "/home", title = "首页", referrer = "",
+            language = "zh-CN", screen = "1080x2400",
+        )
+        assertEquals("event", payload["type"]!!.jsonPrimitive.content)
+        val p = payload["payload"]!!.jsonObject
+        assertEquals("97ce2a8e-3118-478e-81e3-ea76c9f73f35", p["website"]!!.jsonPrimitive.content)
+        assertEquals("app.seu.wiki", p["hostname"]!!.jsonPrimitive.content)
+        assertEquals("/home", p["url"]!!.jsonPrimitive.content)
+        assertEquals("首页", p["title"]!!.jsonPrimitive.content)
+        assertEquals("1080x2400", p["screen"]!!.jsonPrimitive.content)
+        assertEquals("zh-CN", p["language"]!!.jsonPrimitive.content)
+        assertTrue("referrer 字段必须存在（首屏为空串）", p.containsKey("referrer"))
+    }
+
+    @Test
+    fun `Umami 自定义事件带 name 与 data`() {
+        val data = buildJsonObject { put("action", "like") }
+        val payload = Umami.buildEventPayload(
+            name = "post_like", url = "/forum/post", title = "帖子详情",
+            referrer = "/experience", language = "zh-CN", screen = "1080x2400", data = data,
+        )
+        assertEquals("event", payload["type"]!!.jsonPrimitive.content)
+        val p = payload["payload"]!!.jsonObject
+        assertEquals("97ce2a8e-3118-478e-81e3-ea76c9f73f35", p["website"]!!.jsonPrimitive.content)
+        assertEquals("app.seu.wiki", p["hostname"]!!.jsonPrimitive.content)
+        assertEquals("post_like", p["name"]!!.jsonPrimitive.content)
+        assertEquals("like", p["data"]!!.jsonObject["action"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun `Umami 路由映射走两端共用规范路径表 未知路径退回 pattern 本身`() {
+        assertEquals("/home", Umami.screenUrl("home"))
+        assertEquals("首页", Umami.screenTitle("home"))
+        // 规范路径：占位符与查询串绝不进 url（iOS 端同一张表）。
+        assertEquals("/feed/item", Umami.screenUrl("feed/detail/{id}"))
+        assertEquals("/forum/post", Umami.screenUrl("forum/detail/{id}"))
+        assertEquals("帖子详情", Umami.screenTitle("forum/detail/{id}"))
+        assertEquals("/handbook/section", Umami.screenUrl("handbook/section/{id}?name={name}"))
+        assertEquals("/search/results", Umami.screenUrl("search/list/{scope}/{keyword}"))
+        // 统一后的标题。
+        assertEquals("论坛通知", Umami.screenTitle("forum/notifications"))
+        assertEquals("绩点计算", Umami.screenTitle("tools/gpa"))
+        assertEquals("手册长文", Umami.screenTitle("handbook/entry/{slug}"))
+        // 路由表里没有的路径：url 退回 /<pattern>，标题退回 pattern 本身。
+        assertEquals("/some/new-route", Umami.screenUrl("some/new-route"))
+        assertEquals("some/new-route", Umami.screenTitle("some/new-route"))
+    }
+
+    @Test
+    fun `Umami 规范路径表不含占位符与查询串`() {
+        // 整条表过一遍：任何一条把 {id} 或 ?name= 漏进 url，两端数据就没法对齐了。
+        Umami.Screens.forEach { (pattern, screen) ->
+            val (url, title) = screen
+            assertTrue("url 不得含占位符：$pattern → $url", !url.contains("{") && !url.contains("}"))
+            assertTrue("url 不得含查询串：$pattern → $url", !url.contains("?"))
+            assertTrue("url 必须以 / 开头：$pattern → $url", url.startsWith("/"))
+            assertTrue("title 不得为空：$pattern", title.isNotBlank())
+        }
+    }
+
+    @Test
+    fun `Umami 上报走 POST api send 带 UA 与 JSON 头 失败一律静默`() {
+        withLocalApi({ 200 to "{}" }) { api ->
+            val client = AnalyticsClient(
+                endpoint = api.baseUrl + "/api/send",
+                userAgent = "Mozilla/5.0 (Linux; Android 15; Pixel 8) SEUWiki/0.3.0",
+            )
+            val ok = runBlocking {
+                client.post(Umami.buildScreenViewPayload("/home", "首页", "", "zh-CN", "1080x2400"))
+            }
+            assertTrue("200 才算上报成功", ok)
+            val req = requireNotNull(api.last) { "应当发出过请求" }
+            assertEquals("POST", req.method)
+            assertEquals("/api/send", req.path)
+            assertTrue("必须 application/json", req.contentType!!.startsWith("application/json"))
+            assertTrue(
+                "User-Agent 必填，服务端靠 IP+UA 解析设备/OS",
+                req.userAgent!!.contains("Android"),
+            )
+        }
+        // 非 2xx 与连接失败都必须静默吞掉（返回 false 而不是抛）。
+        withLocalApi({ 500 to """{"error":"INTERNAL"}""" }) { api ->
+            val client = AnalyticsClient(endpoint = api.baseUrl + "/api/send", userAgent = "ua")
+            assertFalse(
+                "500 必须静默吞掉",
+                runBlocking { client.post(Umami.buildScreenViewPayload("/home", "首页", "", "zh-CN", "1080x2400")) },
+            )
+        }
+        val dead = AnalyticsClient(endpoint = "http://127.0.0.1:1/api/send", userAgent = "ua")
+        assertFalse(
+            "离线/连接拒绝必须静默吞掉",
+            runBlocking { dead.post(Umami.buildScreenViewPayload("/home", "首页", "", "zh-CN", "1080x2400")) },
+        )
+    }
+
+    @Test
+    fun `Umami DEBUG 构建不上报 埋点挂在导航层`() {
+        // 源码级回归锁：屏幕浏览埋点只能集中在 RootView 的导航监听里，
+        // 不许散到各页面手动埋；且 DEBUG 构建必须被 BuildConfig.DEBUG 挡住。
+        val root = File("src/main/java/tech/iflink/seuwiki")
+        val analytics = File(root, "data/Analytics.kt")
+        val rootView = File(root, "ui/RootView.kt")
+        assertTrue("应当找到 Analytics.kt", analytics.isFile)
+        assertTrue(
+            "DEBUG 构建不上报的开关必须存在",
+            analytics.readText(Charsets.UTF_8).contains("BuildConfig.DEBUG"),
+        )
+        val rv = rootView.readText(Charsets.UTF_8)
+        assertTrue(
+            "导航层必须监听路由变化自动上报",
+            rv.contains("currentBackStackEntryFlow") && rv.contains("Analytics.trackScreen"),
+        )
     }
 }

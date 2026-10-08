@@ -46,6 +46,8 @@ null。以下规则就是为杜绝这一类问题定的。
 - `data/AuthStore.kt` — Logto 会话、token 续期、登录/登出动作。
 - `data/ForumStore.kt` — 论坛全部状态（列表/详情/收藏/关注/手册），实现登录态钩子。
 - `data/ForumApiClient.kt` — 论坛后端 HTTP 客户端，token 只靠注入的 tokenProvider。
+- `data/Analytics.kt` — Umami 统计（`app.seu.wiki` 站点）：payload 纯函数 + fire-and-forget
+  发送器 + 导航层自动屏幕浏览埋点（RootView 的 `currentBackStackEntryFlow`），DEBUG 不上报。
 - `ui/RootView.kt` — 路由 + 各 store 装配 + 登录态统一接线（`LaunchedEffect`）。
 - `ui/forum/ForumScreens.kt` — 论坛各页面，登录门禁一律吃 `isLoggedIn` 参数。
 

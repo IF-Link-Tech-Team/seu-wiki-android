@@ -52,6 +52,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import tech.iflink.seuwiki.data.Analytics
 import tech.iflink.seuwiki.data.AuthStore
 import tech.iflink.seuwiki.models.TopicCatalog
 import tech.iflink.seuwiki.data.FeedStore
@@ -240,6 +241,16 @@ fun RootView(
     }
 
     val navController = rememberNavController()
+
+    // 导航层自动埋屏幕浏览（Umami）：路由 pattern 变化即上报一次，referrer 记上一个屏幕。
+    // destination.route 拿到的是路由模板（forum/detail/{id}），url 里天然不含参数值；
+    // DEBUG 构建整体不上报（Analytics 内部判 BuildConfig.DEBUG）。
+    LaunchedEffect(navController) {
+        Analytics.init(context.applicationContext)
+        navController.currentBackStackEntryFlow.collect { entry ->
+            entry.destination.route?.let { Analytics.trackScreen(it) }
+        }
+    }
 
     // 冷启动对账：补回被系统清掉的闹钟、撤掉已删除的提醒。
     // 必须在提醒列表**已加载**之后跑，否则会把「还没读到」误判成「用户删了」。
