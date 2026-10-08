@@ -118,3 +118,13 @@ iOS 用 SwiftUI 原生控件，本端用 Material 原生控件 —— 同一个�
 这条是模拟器截图里看到「收藏按钮渲染成九宫格」之后补的。
 
 新增这类修复时请一并补断言。
+
+## 参与共建
+
+这是东大学生共建的开源项目（MIT），欢迎提 Issue 和 PR。改动前先读
+`AGENTS.md` —— 账号体系铁律、构建要求（JDK 17）、自检对齐规则都在里面。
+涉及双端行为的改动，记得同步 iOS 端 `../seu-wiki-app` 的 `SelfCheck.swift` 断言。
+
+## License
+
+MIT，见 `LICENSE`。
