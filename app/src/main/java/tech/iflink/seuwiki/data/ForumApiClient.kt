@@ -16,6 +16,9 @@ import tech.iflink.seuwiki.models.ForumBookmarkPage
 import tech.iflink.seuwiki.models.ForumBookmarkedPost
 import tech.iflink.seuwiki.models.ForumCommentsPage
 import tech.iflink.seuwiki.models.ForumImage
+import tech.iflink.seuwiki.models.ForumNotification
+import tech.iflink.seuwiki.models.ForumNotificationPage
+import tech.iflink.seuwiki.models.ForumNotificationPost
 import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumPostPage
 import tech.iflink.seuwiki.models.ForumSearchArticle
@@ -519,6 +522,44 @@ class ForumApiClient(
         )
     }
 
+    // MARK: - 通知（需登录）
+
+    /**
+     * `GET /api/notifications?limit=&cursor=` —— 当前用户通知列表，**需登录**
+     * （未登录 401 `UNAUTHORIZED`）。
+     *
+     * keyset 游标（latest 排序），约定与 `/api/posts` latest 一致。
+     * 响应顺带下发 `unread_count`，角标直接用，不必再发一发请求。
+     * `actor` / `post` 都可能为 null（动作方被软删 / 目标帖已删），条目仍在。
+     */
+    suspend fun notifications(cursor: String? = null, limit: Int = PageSize): ForumNotificationPage {
+        val dto: NotificationsResponse = get(
+            "/api/notifications",
+            buildList {
+                add("limit" to limit.coerceIn(1, 50).toString())
+                cursor?.takeIf { it.isNotBlank() }?.let { add("cursor" to it) }
+            },
+        )
+        return ForumNotificationPage(
+            items = dto.notifications.map { it.toNotification() },
+            nextCursor = dto.next_cursor,
+            unreadCount = dto.unread_count,
+        )
+    }
+
+    /**
+     * `POST /api/notifications/mark-read` —— 把当前用户的通知全部标记已读。
+     *
+     * body 必须是**空对象**（`notifications/mark-read/route.ts` 的
+     * `hasOnlyKeys(parsed.body, [])`，多一个 key 就 400 `INVALID_BODY`）。
+     * 返回服务端回执的未读数（成功时恒 0）。
+     */
+    suspend fun markNotificationsRead(): Int {
+        val dto: MarkNotificationsReadResponse =
+            send("POST", "/api/notifications/mark-read", buildJsonObject {})
+        return dto.unread_count
+    }
+
     // MARK: - 搜索（匿名可读）
 
     /**
@@ -968,6 +1009,39 @@ private data class ForumSearchResponse(
     val articles: SearchArticleGroupDto? = null,
 )
 
+/** 通知条目。`actor` / `post` 服务端都可能给 null（软删用户 / 已删帖）。 */
+@Serializable
+private data class NotificationDto(
+    val id: String,
+    val type: String = "comment",
+    val target_type: String? = null,
+    val target_id: String? = null,
+    val read_at: String? = null,
+    val created_at: String? = null,
+    val actor: AuthorDto? = null,
+    val post: NotificationPostDto? = null,
+)
+
+@Serializable
+private data class NotificationPostDto(
+    val id: String,
+    val title: String? = null,
+    val excerpt: String = "",
+)
+
+@Serializable
+private data class NotificationsResponse(
+    val notifications: List<NotificationDto> = emptyList(),
+    val next_cursor: String? = null,
+    val unread_count: Int = 0,
+)
+
+@Serializable
+private data class MarkNotificationsReadResponse(
+    val marked: Int = 0,
+    val unread_count: Int = 0,
+)
+
 // MARK: - DTO → model
 
 private fun AuthorDto.toAuthor() = ForumAuthor(
@@ -1039,4 +1113,14 @@ private fun ViewerDto.toViewer() = ForumViewer(
     username = username,
     forumRole = forumRole,
     capabilities = capabilities,
+)
+
+private fun NotificationDto.toNotification() = ForumNotification(
+    id = id,
+    type = type,
+    targetId = target_id.orEmpty(),
+    readAt = parseIso8601(read_at),
+    createdAt = parseIso8601(created_at),
+    actor = actor?.toAuthor(),
+    post = post?.let { ForumNotificationPost(it.id, it.title, it.excerpt) },
 )

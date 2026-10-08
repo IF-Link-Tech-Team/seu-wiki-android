@@ -73,6 +73,7 @@ import tech.iflink.seuwiki.ui.experience.HandbookSectionScreen
 import tech.iflink.seuwiki.ui.forum.ForumBookmarksScreen
 import tech.iflink.seuwiki.ui.forum.ForumComposeScreen
 import tech.iflink.seuwiki.ui.forum.ForumHotListScreen
+import tech.iflink.seuwiki.ui.forum.ForumNotificationsScreen
 import tech.iflink.seuwiki.ui.forum.ForumPostDetailScreen
 import tech.iflink.seuwiki.ui.forum.ForumPostListScreen
 import tech.iflink.seuwiki.ui.feed.FeedScope
@@ -135,6 +136,7 @@ object Routes {
     const val FORUM_COMPOSE = "forum/compose"
     const val FORUM_EDIT = "forum/edit/{id}"
     const val FORUM_BOOKMARKS = "forum/bookmarks"
+    const val FORUM_NOTIFICATIONS = "forum/notifications"
 
     /**
      * 编码**单个**路径段。
@@ -318,6 +320,7 @@ fun RootView(
                     onOpenHandbookSection = { slug, name ->
                         navController.navigate(Routes.handbookSection(slug, name))
                     },
+                    onOpenNotifications = { navController.navigate(Routes.FORUM_NOTIFICATIONS) },
                 )
             }
             composable(AppTab.Tools.route) {
@@ -436,6 +439,14 @@ fun RootView(
                     onBack = { navController.popBackStack() },
                     onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
                     onOpenTopic = { navController.navigate(Routes.topicDetail(it)) },
+                    onGoLogin = launchLogin,
+                )
+            }
+            composable(Routes.FORUM_NOTIFICATIONS) {
+                ForumNotificationsScreen(
+                    store = forumStore,
+                    onBack = { navController.popBackStack() },
+                    onOpenPost = { navController.navigate(Routes.forumDetail(it)) },
                     onGoLogin = launchLogin,
                 )
             }

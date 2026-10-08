@@ -52,6 +52,7 @@ import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Percent
 import androidx.compose.material.icons.outlined.PeopleAlt
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Numbers
 import androidx.compose.material.icons.outlined.Person
 import androidx.compose.material.icons.outlined.PhotoLibrary
@@ -104,6 +105,7 @@ object SeuIcons {
 
         // Home bento
         "bell.fill" to Icons.Filled.Notifications,
+        "bell" to Icons.Outlined.Notifications,
         "calendar.day.timeline.left" to Icons.Outlined.CalendarToday,
 
         // Forum / topics

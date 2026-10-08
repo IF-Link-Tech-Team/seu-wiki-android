@@ -1488,4 +1488,95 @@ class SelfCheckTest {
         assertTrue("ForumStore 必须实现 onSignedIn()", storeSrc.contains("fun onSignedIn()"))
         assertTrue("ForumStore 必须实现 onSignedOut()", storeSrc.contains("fun onSignedOut()"))
     }
+
+    // MARK: - 论坛通知
+
+    @Test
+    fun `通知列表响应能解析 且 actor 与 post 可为 null`() {
+        // src/lib/services/notifications.ts 的真实响应形状：
+        // snake_case、actor（动作方被软删）与 post（目标帖已删）都可能为 null，条目仍下发。
+        val json = """
+            {"notifications":[
+              {"id":"n1","type":"comment","target_type":"post","target_id":"p1",
+               "read_at":null,"created_at":"2026-10-08T02:00:00.000Z",
+               "actor":{"id":"u1","display_name":"Stella","username":"stella","avatar_url":null},
+               "post":{"id":"p1","title":"宿舍门禁工具与边界","excerpt":"面向部分东大宿舍…"}},
+              {"id":"n2","type":"like","target_type":"post","target_id":"p2",
+               "read_at":"2026-10-07T10:00:00.000Z","created_at":"2026-10-07T09:00:00.000Z",
+               "actor":null,"post":null}
+            ],"next_cursor":"bmV4dA","unread_count":3}
+        """.trimIndent()
+        withLocalApi({ 200 to json }) { api ->
+            val page = runBlocking { ForumApiClient(baseUrl = api.baseUrl).notifications() }
+            assertEquals(2, page.items.size)
+            assertEquals("bmV4dA", page.nextCursor)
+            assertEquals("角标只认服务端下发的 unread_count", 3, page.unreadCount)
+            val first = page.items[0]
+            assertEquals("comment", first.type)
+            assertEquals("p1", first.targetId)
+            assertTrue("read_at 为 null 即未读", first.isUnread)
+            assertEquals("Stella", first.actor?.nameOrFallback)
+            assertEquals("宿舍门禁工具与边界", first.post?.title)
+            val second = page.items[1]
+            assertNull("actor 可为 null", second.actor)
+            assertNull("post 可为 null（帖子已删）", second.post)
+            assertFalse(second.isUnread)
+        }
+    }
+
+    @Test
+    fun `通知列表的游标原样回传`() {
+        withLocalApi({ 200 to """{"notifications":[],"next_cursor":null,"unread_count":0}""" }) { api ->
+            runBlocking { ForumApiClient(baseUrl = api.baseUrl).notifications(cursor = "abc", limit = 30) }
+            val q = requireNotNull(requireNotNull(api.last).query)
+            assertTrue("游标原样回传，不许自己拼", q.contains("cursor=abc"))
+            assertTrue("limit 要夹在服务端上限 50 内", q.contains("limit=30"))
+            assertEquals("/api/notifications", requireNotNull(api.last).path)
+        }
+    }
+
+    @Test
+    fun `全部已读的 body 必须是空对象`() {
+        // notifications/mark-read/route.ts 的 hasOnlyKeys(parsed.body, [])：
+        // 多一个 key 就 400 INVALID_BODY，所以 body 只能恰好是 {}。
+        withLocalApi({ 200 to """{"marked":2,"unread_count":0}""" }) { api ->
+            val unread = runBlocking {
+                ForumApiClient(baseUrl = api.baseUrl).markNotificationsRead()
+            }
+            assertEquals(0, unread)
+            val req = requireNotNull(api.last)
+            assertEquals("POST", req.method)
+            assertEquals("/api/notifications/mark-read", req.path)
+            assertEquals("body 必须恰好是空对象", "{}", req.body)
+            assertTrue("必须 application/json", req.contentType!!.startsWith("application/json"))
+        }
+    }
+
+    @Test
+    fun `角标随接口更新 全部已读后清零 登出后复位`() {
+        val listJson = """{"notifications":[],"next_cursor":null,"unread_count":2}"""
+        withLocalApi({ req ->
+            when (req.path) {
+                "/api/notifications/mark-read" -> 200 to """{"marked":2,"unread_count":0}"""
+                else -> 200 to listJson
+            }
+        }) { api ->
+            val store = ForumStore(
+                ForumApiClient(baseUrl = api.baseUrl, tokenProvider = { "app-token" }),
+            )
+            assertEquals(0, store.unreadCount)
+
+            store.refreshUnreadCount()
+            waitForStore { store.unreadCount == 2 }
+            assertEquals("角标来自服务端 unread_count", 2, store.unreadCount)
+
+            store.markNotificationsRead()
+            waitForStore { store.unreadCount == 0 }
+            assertEquals("全部已读后角标立即清零", 0, store.unreadCount)
+
+            store.onSignedOut()
+            assertEquals("登出后角标必须复位", 0, store.unreadCount)
+            assertFalse("登出后通知列表复位成未加载", store.notifications.hasLoaded)
+        }
+    }
 }

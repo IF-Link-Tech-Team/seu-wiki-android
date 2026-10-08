@@ -15,6 +15,7 @@ import tech.iflink.seuwiki.models.ForumBookmarkPage
 import tech.iflink.seuwiki.models.ForumBookmarkedPost
 import tech.iflink.seuwiki.models.ForumComment
 import tech.iflink.seuwiki.models.ForumCommentsPage
+import tech.iflink.seuwiki.models.ForumNotification
 import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumSort
 import tech.iflink.seuwiki.models.ForumTargetType
@@ -120,6 +121,30 @@ class ForumStore(
     /** 热榜（sort=hot，置顶优先）。独立于 [_list]：它是 offset 分页，游标体系不同。 */
     private val _hot = mutableStateOf(ListState())
     val hot: ListState get() = _hot.value
+
+    /** 通知列表。与收藏同属「纯服务端」接口：未登录必然 401，needsLogin 给登录引导。 */
+    data class NotificationState(
+        val items: List<ForumNotification> = emptyList(),
+        val nextCursor: String? = null,
+        val isLoading: Boolean = false,
+        val isLoadingMore: Boolean = false,
+        val hasLoaded: Boolean = false,
+        val isOffline: Boolean = false,
+        val needsLogin: Boolean = false,
+        val errorMessage: String? = null,
+    )
+
+    private val _notifications = mutableStateOf(NotificationState())
+    val notifications: NotificationState get() = _notifications.value
+
+    /**
+     * 未读角标。**只**由通知接口下发的 `unread_count` 更新（mark-read 除外，它本地清零），
+     * 客户端不对已加载页自己数 —— 列表是分页的，数出来的只是冰山一角。
+     */
+    private val _unreadCount = mutableStateOf(0)
+    val unreadCount: Int get() = _unreadCount.value
+
+    private var notificationsGeneration = 0
 
     /** 关注流（/api/feed/following，需登录）。 */
     private val _following = mutableStateOf(ListState())
@@ -412,6 +437,94 @@ class ForumStore(
                         errorMessage = describe(e),
                     )
                 }
+        }
+    }
+
+    // MARK: - 通知
+
+    /**
+     * 只刷未读数：拉 1 条拿 `unread_count`，给铃铛角标用。
+     * 失败静默 —— 角标晚一拍出现无碍浏览，不该因此弹错误。
+     */
+    fun refreshUnreadCount() {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.notifications(limit = 1) } }
+                .onSuccess { page -> _unreadCount.value = page.unreadCount }
+        }
+    }
+
+    /** 通知列表首页。401 是正常路径（未登录）：needsLogin，UI 给登录引导。 */
+    fun refreshNotifications() {
+        notificationsGeneration++
+        _notifications.value = _notifications.value.copy(
+            isLoading = true, isOffline = false, needsLogin = false, errorMessage = null,
+        )
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.notifications() } }
+                .onSuccess { page ->
+                    _notifications.value = NotificationState(
+                        items = page.items,
+                        nextCursor = page.nextCursor,
+                        hasLoaded = true,
+                    )
+                    _unreadCount.value = page.unreadCount
+                }
+                .onFailure { e ->
+                    val unauthorized = (e as? ForumApiException)?.isUnauthorized == true
+                    _notifications.value = _notifications.value.copy(
+                        isLoading = false,
+                        hasLoaded = true,
+                        isOffline = !unauthorized,
+                        needsLogin = unauthorized,
+                        errorMessage = if (unauthorized) null else describe(e),
+                    )
+                }
+        }
+    }
+
+    fun loadMoreNotifications() {
+        val state = _notifications.value
+        if (state.isLoading || state.isLoadingMore) return
+        val cursor = state.nextCursor ?: return
+        val genAtStart = notificationsGeneration
+        _notifications.value = state.copy(isLoadingMore = true)
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.notifications(cursor) } }
+                .onSuccess { page ->
+                    if (genAtStart != notificationsGeneration) return@onSuccess
+                    val current = _notifications.value
+                    _notifications.value = current.copy(
+                        items = (current.items + page.items).distinctBy { it.id },
+                        nextCursor = page.nextCursor,
+                        isLoadingMore = false,
+                    )
+                }
+                .onFailure { e ->
+                    if (genAtStart != notificationsGeneration) return@onFailure
+                    _notifications.value = _notifications.value.copy(
+                        isLoadingMore = false,
+                        isOffline = true,
+                        errorMessage = describe(e),
+                    )
+                }
+        }
+    }
+
+    /**
+     * 全部标记已读：**先清本地再发请求**（角标立即消失，与 toggleLike 同理）。
+     * 未读高亮该不该留由 UI 决定 —— 通知页在进入时先快照一份未读 id 再调这里，
+     * 所以本地 readAt 被改写不影响那一屏的高亮。
+     */
+    fun markNotificationsRead() {
+        val hadUnread = _unreadCount.value > 0 || _notifications.value.items.any { it.isUnread }
+        if (!hadUnread) return
+        val now = System.currentTimeMillis()
+        _unreadCount.value = 0
+        _notifications.value = _notifications.value.copy(
+            items = _notifications.value.items.map { it.copy(readAt = it.readAt ?: now) },
+        )
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { client.markNotificationsRead() } }
         }
     }
 
@@ -771,9 +884,11 @@ class ForumStore(
      */
     fun onSignedIn() {
         refreshViewer()
+        refreshUnreadCount()
         if (_bookmarks.value.hasLoaded) refreshBookmarks()
         if (_following.value.hasLoaded) refreshFollowing()
         if (_followsLoaded.value) loadFollows()
+        if (_notifications.value.hasLoaded) refreshNotifications()
     }
 
     /**
@@ -791,6 +906,9 @@ class ForumStore(
         _followedTags.value = emptyList()
         _suggestedTags.value = emptyList()
         _followsLoaded.value = false
+        _notifications.value = NotificationState()
+        notificationsGeneration++
+        _unreadCount.value = 0
         listOf(_list, _hot).forEach { state ->
             state.value = state.value.copy(
                 posts = state.value.posts.map { it.copy(likedByMe = false, bookmarked = false) },

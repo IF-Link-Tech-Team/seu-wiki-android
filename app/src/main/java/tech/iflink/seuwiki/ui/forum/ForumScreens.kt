@@ -71,6 +71,7 @@ import tech.iflink.seuwiki.design.SeuType
 import tech.iflink.seuwiki.design.TintPill
 import tech.iflink.seuwiki.design.VSpace
 import tech.iflink.seuwiki.design.cardStyle
+import tech.iflink.seuwiki.models.ForumNotification
 import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumSort
 import tech.iflink.seuwiki.models.ForumTargetType
@@ -1586,6 +1587,231 @@ fun ForumBookmarksScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: - 通知
+
+/**
+ * 经验页顶栏的铃铛入口。未读数 > 0 时右上角叠一个角标（>99 显示 99+）。
+ * 只在已登录时渲染 —— 通知是纯登录态功能，游客给它入口只会撞登录墙。
+ */
+@Composable
+fun ForumNotificationBell(unreadCount: Int, onClick: () -> Unit) {
+    val colors = SeuTheme.colors
+    Box(
+        Modifier
+            .size(36.dp)
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .semantics { contentDescription = "通知" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = SeuIcons.of("bell"),
+            contentDescription = null,
+            tint = colors.label,
+            modifier = Modifier.size(22.dp),
+        )
+        if (unreadCount > 0) {
+            Box(
+                Modifier
+                    .align(Alignment.TopEnd)
+                    .heightIn(min = 16.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(colors.accent)
+                    .padding(horizontal = 4.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                    style = SeuType.Caption,
+                    color = colors.onAccentInverted,
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 通知列表（`GET /api/notifications`，需登录）。
+ *
+ * 未读高亮的寿命只有「进入这一屏」一次：进入时先快照未读 id，再调
+ * [ForumStore.markNotificationsRead] 把本地 readAt 全部改写 —— 所以高亮
+ * 判断看的是快照，不是条目当前的 readAt。下次再进，那批通知已是旧闻。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ForumNotificationsScreen(
+    store: ForumStore,
+    onBack: () -> Unit,
+    onOpenPost: (String) -> Unit,
+    onGoLogin: () -> Unit,
+) {
+    val colors = SeuTheme.colors
+    val state = store.notifications
+    LaunchedEffect(Unit) { store.refreshNotifications() }
+    // 登录成功后回到本页：needsLogin 翻过来时自动重拉（与收藏页同理）。
+    LaunchedEffect(state.needsLogin) {
+        if (!state.needsLogin) store.refreshNotifications()
+    }
+
+    // 进入本页时的未读快照：null = 还没拍过（首屏未加载完 / 已拍过都不再改）。
+    var unreadAtEntry by remember { mutableStateOf<Set<String>?>(null) }
+    LaunchedEffect(state.hasLoaded) {
+        if (state.hasLoaded && unreadAtEntry == null) {
+            unreadAtEntry = state.items.filter { it.isUnread }.map { it.id }.toSet()
+            store.markNotificationsRead()
+        }
+    }
+
+    val listState = rememberLazyListState()
+    val shouldLoadMore by remember {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val total = listState.layoutInfo.totalItemsCount
+            total > 0 && last >= total - 2
+        }
+    }
+    LaunchedEffect(shouldLoadMore, state.nextCursor) {
+        if (shouldLoadMore && state.nextCursor != null) store.loadMoreNotifications()
+    }
+
+    val loginAction: (@Composable () -> Unit)? = if (state.needsLogin) {
+        {
+            Button(
+                onClick = onGoLogin,
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(containerColor = colors.accent),
+                modifier = Modifier.heightIn(min = 48.dp),
+            ) { Text("用 IF.Link 账号登录") }
+        }
+    } else {
+        null
+    }
+
+    TabPage {
+        Column(Modifier.fillMaxSize()) {
+            DetailHeader(title = "通知", onBack = onBack)
+            when {
+                state.isLoading && !state.hasLoaded -> LoadingView(topPadding = 40.dp)
+                state.items.isEmpty() -> EmptyStateView(
+                    title = when {
+                        state.needsLogin -> "登录后查看通知"
+                        state.isOffline -> "加载失败"
+                        else -> "还没有通知"
+                    },
+                    description = state.errorMessage
+                        ?: "帖子收到评论、回复或点赞时会提醒你。",
+                    icon = { ForumGlyph(icon = "bell", tint = colors.tertiaryLabel) },
+                    topPadding = 40.dp,
+                    action = loginAction,
+                )
+                else -> PullToRefreshBox(
+                    isRefreshing = state.isLoading,
+                    onRefresh = { store.refreshNotifications() },
+                    modifier = Modifier.fillMaxSize(),
+                ) {
+                    LazyColumn(
+                        state = listState,
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        items(state.items, key = { it.id }) { notification ->
+                            ForumNotificationRow(
+                                notification = notification,
+                                highlightUnread = notification.id in (unreadAtEntry ?: emptySet()),
+                                onClick = notification.post?.let { { onOpenPost(it.id) } },
+                            )
+                        }
+                        if (state.isLoadingMore) {
+                            item(key = "__loading_more__") {
+                                Box(
+                                    Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) { Text("加载中…", style = SeuType.Footnote, color = colors.secondaryLabel) }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 一条通知。actor / post 都可能为 null（软删用户 / 已删帖），条目仍渲染：
+ * post 为 null 时不可点击，摘要让位给「内容已删除」。
+ */
+@Composable
+private fun ForumNotificationRow(
+    notification: ForumNotification,
+    highlightUnread: Boolean,
+    onClick: (() -> Unit)?,
+) {
+    val colors = SeuTheme.colors
+    val context = LocalContext.current
+    val action = when (notification.type) {
+        "comment" -> "评论了你的帖子"
+        "reply" -> "回复了你的评论"
+        "like" -> "赞了你的帖子"
+        else -> "与你互动了"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .cardStyle()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
+            .padding(14.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        InitialsAvatar(name = notification.actor?.nameOrFallback ?: "匿", size = 36.dp)
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = notification.actor?.nameOrFallback ?: "匿名",
+                    style = SeuType.Subheadline,
+                    color = colors.label,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = action,
+                    style = SeuType.Subheadline,
+                    color = colors.secondaryLabel,
+                    maxLines = 1,
+                )
+            }
+            VSpace(4.dp)
+            Text(
+                text = notification.post?.let { it.title?.takeIf { t -> t.isNotBlank() } ?: it.excerpt }
+                    ?: "相关内容已删除",
+                style = SeuType.Footnote,
+                color = colors.tertiaryLabel,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            notification.createdAt?.let {
+                val rel = Format.relative(context, it)
+                if (rel.isNotEmpty()) {
+                    VSpace(4.dp)
+                    Text(rel, style = SeuType.Caption, color = colors.tertiaryLabel, maxLines = 1)
+                }
+            }
+        }
+        if (highlightUnread) {
+            Spacer(Modifier.width(8.dp))
+            Box(
+                Modifier
+                    .padding(top = 6.dp)
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(colors.accent),
+            )
         }
     }
 }

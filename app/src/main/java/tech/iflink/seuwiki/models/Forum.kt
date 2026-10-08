@@ -291,6 +291,49 @@ data class HandbookArticle(
     val sourcePost: HandbookSourcePost? = null,
 )
 
+// MARK: - 通知（/api/notifications，需登录）
+
+/**
+ * 一条通知（`GET /api/notifications` 的 `notifications[]`）。
+ *
+ * 契约要点（`src/lib/services/notifications.ts`）：
+ * - [type] 目前只有 comment / reply / like 三种，target_type 只有 post；
+ * - [actor] 可能为 null（动作方被软删除），[post] 可能为 null（目标帖已删/不可见），
+ *   这两种情况条目**仍然下发**，UI 要兜底渲染而不是剔除；
+ * - [readAt] 为 null 即未读 —— 未读高亮只看这个字段。
+ */
+data class ForumNotification(
+    val id: String,
+    val type: String,
+    /** 目标帖 id（target_type 目前只有 post，客户端不解析 target_type 字段本身）。 */
+    val targetId: String,
+    val readAt: Long?,
+    val createdAt: Long?,
+    val actor: ForumAuthor?,
+    val post: ForumNotificationPost?,
+) {
+    val isUnread: Boolean get() = readAt == null
+}
+
+/** 通知里目标帖的摘要；帖子已删/不可见时整个对象为 null。 */
+data class ForumNotificationPost(
+    val id: String,
+    val title: String?,
+    val excerpt: String,
+)
+
+/**
+ * 通知列表的一页。keyset 游标（latest 排序）。
+ *
+ * [unreadCount] 是服务端顺带下发的未读总数 —— 角标靠它，
+ * 客户端不要自己数（列表是分页的，数出来的只是这一页）。
+ */
+data class ForumNotificationPage(
+    val items: List<ForumNotification>,
+    val nextCursor: String?,
+    val unreadCount: Int,
+)
+
 // MARK: - 关注（/api/follows、/api/feed/following）
 
 /** `GET /api/follows?target_type=tag` 里的一条关注记录。 */

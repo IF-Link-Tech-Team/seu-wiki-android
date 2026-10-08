@@ -23,6 +23,7 @@ import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.forum.ForumFollowingList
 import tech.iflink.seuwiki.ui.forum.ForumHotList
+import tech.iflink.seuwiki.ui.forum.ForumNotificationBell
 
 /**
  * 经验 tab 的三个子页，按 console 胶囊顺序。
@@ -68,6 +69,7 @@ fun ExperienceScreen(
     onCompose: () -> Unit,
     onOpenTopic: (String) -> Unit,
     onOpenHandbookSection: (slug: String, name: String) -> Unit,
+    onOpenNotifications: () -> Unit,
 ) {
     val tabs = ExperienceTab.all
     var tabKey by rememberSaveable { mutableStateOf(ExperienceTab.Hot.key) }
@@ -89,7 +91,19 @@ fun ExperienceScreen(
 
     TabPage {
         Column(Modifier.fillMaxSize()) {
-            ScreenHeader(title = stringResource(R.string.experience_title), onProfileClick = onOpenProfile)
+            ScreenHeader(
+                title = stringResource(R.string.experience_title),
+                onProfileClick = onOpenProfile,
+                trailing = {
+                    // 通知是纯登录态功能：未登录不渲染入口（门禁只看 isLoggedIn，见 AGENTS.md）。
+                    if (isLoggedIn) {
+                        ForumNotificationBell(
+                            unreadCount = forumStore.unreadCount,
+                            onClick = onOpenNotifications,
+                        )
+                    }
+                },
+            )
             ConsoleBar(
                 items = tabs,
                 selection = tab,
