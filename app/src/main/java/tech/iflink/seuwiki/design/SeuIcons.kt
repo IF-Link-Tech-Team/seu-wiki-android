@@ -38,6 +38,7 @@ import androidx.compose.material.icons.outlined.Checklist
 import androidx.compose.material.icons.outlined.CreditCard
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.DirectionsBus
 import androidx.compose.material.icons.outlined.Eco
 import androidx.compose.material.icons.outlined.Edit
@@ -134,7 +135,7 @@ object SeuIcons {
         "checklist" to Icons.Outlined.Checklist,
 
         // Shared affordances
-        "heart" to Icons.Filled.Favorite,
+        "heart" to Icons.Outlined.FavoriteBorder,
         "heart.fill" to Icons.Filled.Favorite,
         "star.fill" to Icons.Filled.Star,
         "star" to Icons.Outlined.Star,

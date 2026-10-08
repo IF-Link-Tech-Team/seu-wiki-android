@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -822,6 +823,46 @@ private fun StatGlyph(icon: String, count: Int) {
     }
 }
 
+/**
+ * 详情页操作行的图标按钮：图标为主、可带计数，激活态主题色、危险操作红色。
+ * 触控区 = 20dp 图标 + 双向 padding，约 32-40dp，与整行其他入口对齐。
+ */
+@Composable
+private fun DetailAction(
+    icon: String,
+    count: Int?,
+    active: Boolean,
+    contentDescription: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+) {
+    val colors = SeuTheme.colors
+    val tint = when {
+        destructive -> colors.red
+        active -> colors.accent
+        else -> colors.secondaryLabel
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        modifier = Modifier
+            .clip(CircleShape)
+            .clickable(onClick = onClick)
+            .semantics { this.contentDescription = contentDescription }
+            .padding(horizontal = 6.dp, vertical = 10.dp),
+    ) {
+        Icon(
+            imageVector = SeuIcons.of(icon),
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(20.dp),
+        )
+        if (count != null) {
+            Text("$count", style = SeuType.Subheadline, color = tint)
+        }
+    }
+}
+
 /** 帖子详情 + 评论。 */
 @Composable
 fun ForumPostDetailScreen(
@@ -929,64 +970,72 @@ fun ForumPostDetailScreen(
                             }
                         }
                         VSpace(12.dp)
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            ForumChip(
-                                label = if (post.likedByMe) "已赞" else "赞 ${post.likesCount}",
-                                selected = post.likedByMe,
+                        // 操作行：赞 / 收藏 / 浏览 / 评论 / 编辑 / 删除 一排搞定，图标为主。
+                        // 浏览数：loadDetail 内部已打过 +1（失败静默），这里显示的是
+                        // 服务端权威值，可能比列表里的大 1。
+                        // 作者自管与管理删除的可见性按 viewer 投影判断，真正的门禁在
+                        // 服务端（403 兜底），与 AGENTS.md 的登录门禁规则不冲突。
+                        val viewerId = store.viewer?.id
+                        val isAuthor = viewerId != null && post.author?.id == viewerId
+                        val canAdminDelete = store.hasCapability("admin:content:delete")
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            DetailAction(
+                                icon = if (post.likedByMe) "heart.fill" else "heart",
+                                count = post.likesCount,
+                                active = post.likedByMe,
+                                contentDescription = if (post.likedByMe) "取消赞" else "赞",
                                 onClick = {
                                     if (!isLoggedIn) onLoginRequired() else store.toggleLike(post.id)
                                 },
                             )
-                            ForumChip(
-                                label = if (post.bookmarked) "已收藏" else "收藏",
-                                selected = post.bookmarked,
+                            Spacer(Modifier.width(16.dp))
+                            DetailAction(
+                                icon = if (post.bookmarked) "bookmark.fill" else "bookmark",
+                                count = null,
+                                active = post.bookmarked,
+                                contentDescription = if (post.bookmarked) "取消收藏" else "收藏",
                                 onClick = {
                                     if (!isLoggedIn) onLoginRequired() else store.toggleBookmark(post.id)
                                 },
                             )
                             Spacer(Modifier.weight(1f))
-                            // 浏览数：loadDetail 内部已打过 +1（失败静默），这里显示的是
-                            // 服务端权威值，可能比列表里的大 1。
                             StatGlyph(icon = "eye", count = post.viewsCount)
                             Spacer(Modifier.width(10.dp))
                             StatGlyph(icon = "bubble.left", count = post.commentsCount)
-                        }
-                        // 作者自管（编辑/删除）与管理删除。可见性按 viewer 投影判断，
-                        // 真正的门禁在服务端（403 兜底），与 AGENTS.md 的登录门禁规则不冲突。
-                        val viewerId = store.viewer?.id
-                        val isAuthor = viewerId != null && post.author?.id == viewerId
-                        val canAdminDelete = store.hasCapability("admin:content:delete")
-                        if (isAuthor || canAdminDelete) {
-                            VSpace(10.dp)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (isAuthor) {
-                                    ForumChip(
-                                        label = "编辑",
-                                        selected = false,
-                                        onClick = { onEditPost(post.id) },
-                                    )
-                                    ForumChip(
-                                        label = "删除",
-                                        selected = false,
-                                        onClick = {
-                                            pendingDelete =
-                                                Triple(ForumTargetType.Post, post.id, false)
-                                        },
-                                    )
-                                }
-                                if (canAdminDelete && !isAuthor) {
-                                    ForumChip(
-                                        label = "管理删除",
-                                        selected = false,
-                                        onClick = {
-                                            pendingDelete =
-                                                Triple(ForumTargetType.Post, post.id, true)
-                                        },
-                                    )
-                                }
+                            if (isAuthor) {
+                                Spacer(Modifier.width(14.dp))
+                                DetailAction(
+                                    icon = "square.and.pencil",
+                                    count = null,
+                                    active = false,
+                                    contentDescription = "编辑",
+                                    onClick = { onEditPost(post.id) },
+                                )
+                                Spacer(Modifier.width(14.dp))
+                                DetailAction(
+                                    icon = "trash",
+                                    count = null,
+                                    active = false,
+                                    destructive = true,
+                                    contentDescription = "删除",
+                                    onClick = {
+                                        pendingDelete =
+                                            Triple(ForumTargetType.Post, post.id, false)
+                                    },
+                                )
+                            } else if (canAdminDelete) {
+                                Spacer(Modifier.width(14.dp))
+                                DetailAction(
+                                    icon = "trash",
+                                    count = null,
+                                    active = false,
+                                    destructive = true,
+                                    contentDescription = "管理删除",
+                                    onClick = {
+                                        pendingDelete =
+                                            Triple(ForumTargetType.Post, post.id, true)
+                                    },
+                                )
                             }
                         }
                     }
@@ -1207,9 +1256,13 @@ fun ForumComposeScreen(
     TabPage {
         Column(Modifier.fillMaxSize()) {
             // 顶栏：返回 / 板块胶囊 / 发布。
+            // statusBarsPadding 不能省：enableEdgeToEdge 下内容会画进状态栏，
+            // 工程里 ScreenHeader / DetailHeader 都统一让位，本页是自建顶栏，
+            // 漏了就顶到通知栏上（2026-10-08 实测踩到）。
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .statusBarsPadding()
                     .padding(horizontal = 8.dp, vertical = 6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
