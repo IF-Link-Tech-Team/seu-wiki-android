@@ -23,7 +23,9 @@ import tech.iflink.seuwiki.ui.feed.FeedScope
  * 换成 ViewModel 之后请求挂在 [viewModelScope] 上，`onCleared` 时统一取消，
  * 实例本身由 `viewModel()` 在配置变更时保留。
  *
- * 每个 console scope（为你精选 / 全部 / 各分类）各自维护一页 cursor 分页状态。
+ * 每个 console scope（精选 / 一手 / 各分类 / 全部）各自维护一份分页状态。
+ * 「精选」走 timeline（cursor 分页），其余 scope 走 pool（page 分页，
+ * `hasMore = page < pageCount`），两种分页在同一套 [PageState] 里并存。
  *
  * **网络失败不再回退假数据**（S-10）。原来的实现会静默塞一份 `MockData` 顶上，
  * 于是「断网了」和「这个分类今天没新内容」在界面上长得一模一样，用户完全无从
@@ -49,13 +51,19 @@ class FeedStore(
     /** One scope's pagination + load state. */
     data class PageState(
         val items: List<FeedItem> = emptyList(),
+        /** timeline（精选）的 keyset 游标；pool 系 scope 恒为 null。 */
         val nextCursor: String? = null,
+        /** pool 系 scope（一手 / 分类 / 全部）的下一页页码；精选恒为 null。 */
+        val nextPage: Int? = null,
         val isLoading: Boolean = false,
         val isLoadingMore: Boolean = false,
         val hasLoaded: Boolean = false,
         /** true 表示最近一次请求失败，当前展示的是**已加载到的旧内容**（或空）。 */
         val isOffline: Boolean = false,
-    )
+    ) {
+        /** 两种分页形态统一成一个「还能再翻」判据。 */
+        val hasMore: Boolean get() = nextCursor != null || nextPage != null
+    }
 
     private val states = mutableMapOf<String, PageState>()
     private val detailCache = mutableMapOf<String, RemoteFeedDetail>()
@@ -116,14 +124,14 @@ class FeedStore(
         states.values.firstNotNullOfOrNull { state -> state.items.firstOrNull { it.id == id } }
 
     /** 首次进入某个 scope 时加载；已加载过的直接复用。 */
-    fun loadIfNeeded(scope: FeedScope, profile: FeedProfile) {
+    fun loadIfNeeded(scope: FeedScope) {
         val state = page(scope)
         if (state.hasLoaded || state.isLoading) return
-        refresh(scope, profile)
+        refresh(scope)
     }
 
     /** 下拉刷新 / 首次加载：成功后重置分页，失败保留旧内容并标记离线。 */
-    fun refresh(scope: FeedScope, profile: FeedProfile) {
+    fun refresh(scope: FeedScope) {
         if (page(scope).isLoading) return
         val key = FeedScope.key(scope)
         // 换代：让此刻仍在途的 loadMore 失效。
@@ -132,12 +140,23 @@ class FeedStore(
         bump()
         viewModelScope.launch {
             try {
-                val result = withContext(Dispatchers.IO) { fetch(scope, profile, null) }
-                states[key] = PageState(
-                    items = result.items.distinctBy { it.id },
-                    nextCursor = result.nextCursor,
-                    hasLoaded = true,
-                )
+                if (scope == FeedScope.Featured) {
+                    val result = withContext(Dispatchers.IO) {
+                        client.timeline(category = null, cursor = null)
+                    }
+                    states[key] = PageState(
+                        items = result.items.distinctBy { it.id },
+                        nextCursor = result.nextCursor,
+                        hasLoaded = true,
+                    )
+                } else {
+                    val result = withContext(Dispatchers.IO) { fetchPool(scope, page = 1) }
+                    states[key] = PageState(
+                        items = result.items.distinctBy { it.id },
+                        nextPage = if (result.hasMore) result.page + 1 else null,
+                        hasLoaded = true,
+                    )
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -145,6 +164,7 @@ class FeedStore(
                 val current = states[key] ?: PageState()
                 states[key] = current.copy(
                     nextCursor = null,
+                    nextPage = null,
                     hasLoaded = true,
                     isOffline = true,
                 )
@@ -156,11 +176,10 @@ class FeedStore(
     }
 
     /** 滚动到底加载下一页。失败静默，下次滚到底会再试。 */
-    fun loadMore(scope: FeedScope, profile: FeedProfile) {
+    fun loadMore(scope: FeedScope) {
         val state = page(scope)
-        val cursor = state.nextCursor
         if (!state.hasLoaded || state.isLoading || state.isLoadingMore ||
-            state.isOffline || cursor == null
+            state.isOffline || !state.hasMore
         ) {
             return
         }
@@ -170,17 +189,28 @@ class FeedStore(
         bump()
         viewModelScope.launch {
             try {
-                val result = withContext(Dispatchers.IO) { fetch(scope, profile, cursor) }
                 // 用户在请求在途时刷新过：这一页属于旧列表，丢掉。
-                if ((generations[key] ?: 0L) != generationAtStart) return@launch
-                states[key]?.let { current ->
-                    states[key] = current.copy(
-                        // 按 id 去重。cursor 分页在条目插入/删除时可能重复返回同一条，
-                        // 而 LazyColumn 的 `key` 一旦重复**直接抛
-                        // IllegalArgumentException 崩掉**（A-2 / S-9）。
-                        items = (current.items + result.items).distinctBy { it.id },
-                        nextCursor = result.nextCursor,
-                    )
+                if (scope == FeedScope.Featured) {
+                    val result = withContext(Dispatchers.IO) {
+                        client.timeline(category = null, cursor = state.nextCursor)
+                    }
+                    if ((generations[key] ?: 0L) != generationAtStart) return@launch
+                    appendPage(key) { current ->
+                        current.copy(
+                            items = (current.items + result.items).distinctBy { it.id },
+                            nextCursor = result.nextCursor,
+                        )
+                    }
+                } else {
+                    val nextPage = state.nextPage ?: return@launch
+                    val result = withContext(Dispatchers.IO) { fetchPool(scope, nextPage) }
+                    if ((generations[key] ?: 0L) != generationAtStart) return@launch
+                    appendPage(key) { current ->
+                        current.copy(
+                            items = (current.items + result.items).distinctBy { it.id },
+                            nextPage = if (result.hasMore) result.page + 1 else null,
+                        )
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -208,39 +238,27 @@ class FeedStore(
 
     // MARK: - Private
 
-    private suspend fun fetch(scope: FeedScope, profile: FeedProfile, cursor: String?): FeedPage =
-        when (scope) {
-            FeedScope.ForYou -> client.forYou(
-                college = profile.college,
-                degree = profile.degree,
-                grade = profile.grade,
-                interests = profile.interests,
-                cursor = cursor,
-            )
-
-            FeedScope.All -> client.timeline(category = null, cursor = cursor)
-
-            is FeedScope.Category -> client.timeline(category = scope.category, cursor = cursor)
-        }
+    /**
+     * pool 系 scope 的路由（网页端 2026-10-08 重构后的约定）：
+     * 一手 → `pool?channel=firstParty`，分类 → `pool?category=<key>`，全部 → `pool`。
+     * 全量无门槛，page 分页，`hasMore = page < pageCount`。
+     */
+    private suspend fun fetchPool(scope: FeedScope, page: Int): PoolPage = when (scope) {
+        FeedScope.FirstParty -> client.pool(channel = "firstParty", page = page)
+        is FeedScope.Category -> client.pool(category = scope.category, page = page)
+        FeedScope.All -> client.pool(page = page)
+        // 精选走 timeline（cursor），不会到这里。
+        FeedScope.Featured -> error("Featured 是 timeline scope，不该走 pool")
+    }
 
     /**
-     * `/api/site/for-you` 需要的画像字段，够用即可。
+     * 追加一页结果。
      *
-     * 只投影 `UserProfileStore` 上这几个字段而不是直接依赖整个 store，这样 store
-     * 可以在没有 Android Context 的环境下构造。
+     * 去重在调用方的 update 里做（`distinctBy { it.id }`）：cursor 分页在条目
+     * 插入/删除时可能重复返回同一条，而 LazyColumn 的 `key` 一旦重复**直接抛
+     * IllegalArgumentException 崩掉**（A-2 / S-9）。
      */
-    data class FeedProfile(
-        val college: String = "",
-        val degree: String = "",
-        val grade: String = "",
-        val interests: List<String> = emptyList(),
-    )
+    private inline fun appendPage(key: String, update: (PageState) -> PageState) {
+        states[key]?.let { current -> states[key] = update(current) }
+    }
 }
-
-/** 把 [UserProfileStore] 的画像字段投影成 [FeedStore.FeedProfile]。 */
-fun UserProfileStore.toFeedProfile(): FeedStore.FeedProfile = FeedStore.FeedProfile(
-    college = college,
-    degree = degree,
-    grade = grade,
-    interests = interests,
-)

@@ -49,7 +49,7 @@ private fun Modifier.maybeClick(onClick: (() -> Unit)?): Modifier =
     if (onClick != null) this.clickable(onClick = onClick) else this
 
 /**
- * Home · 与我有关的通知 row.
+ * Home · 精选通知 row.
  *
  * Port of the private `HomeFeedRow`: a 32dp accent icon well, a two-line title,
  * and a caption meta line that surfaces the first match reason in accent colour.
@@ -156,15 +156,16 @@ private fun StatLabel(symbol: String, text: String, tint: Color? = null) {
 }
 
 /**
- * 资讯 · 为你精选 card.
+ * 资讯 · 精选 card.
  *
- * Port of the private `ForYouCard`: caption source line with the category well
- * and an optional 精选 star, a two-line headline, a two-line summary, and accent
- * chips for the match reasons.
+ * 原 `ForYouCard`：caption source line with the category well and an optional
+ * 精选 star, a two-line headline, a two-line summary, and accent chips for the
+ * match reasons. for-you 下线后留给「精选」tab 用；timeline 不下发
+ * matchReasons，chips 自然不出现。
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ForYouCard(
+fun FeaturedCard(
     item: FeedItem,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
@@ -239,7 +240,7 @@ fun ForYouCard(
     }
 }
 
-/** 资讯 · 全部 / 分类 list card — the denser sibling of [ForYouCard]. */
+/** 资讯 · 一手 / 分类 / 全部 list card — the denser sibling of [FeaturedCard]. */
 @Composable
 fun FeedItemCard(
     item: FeedItem,

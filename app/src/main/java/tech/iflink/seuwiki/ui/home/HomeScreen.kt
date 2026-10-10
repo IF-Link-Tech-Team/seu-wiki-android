@@ -24,7 +24,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -35,7 +34,6 @@ import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.ForumStore
 import tech.iflink.seuwiki.data.UserProfileStore
-import tech.iflink.seuwiki.data.toFeedProfile
 import tech.iflink.seuwiki.design.IconWell
 import tech.iflink.seuwiki.design.InsetDivider
 import tech.iflink.seuwiki.design.SectionHeader
@@ -58,12 +56,13 @@ import androidx.compose.ui.platform.LocalDensity
  * 主页.
  *
  * Port of `HomeView`: a two-up bento row (reminder countdown + next course),
- * then the 「与我有关的通知」 and 「社区热议」 sections, each capped at three rows
+ * then the 「精选通知」 and 「社区热议」 sections, each capped at three rows
  * behind a header that opens the full list.
  *
- * 通知区读「为你精选」第一页；社区热议区读论坛热榜（`GET /api/posts?sort=hot`），
- * 与 iOS `HomeView` 的 `HomePostRow` 区块一致。早期这一栏渲染过
- * `MockData.forumPosts`（虚构作者、虚构互动数），社区接通后一律用真实数据。
+ * 通知区读「精选」第一页（timeline 的 selected 门槛流）；社区热议区读论坛热榜
+ * （`GET /api/posts?sort=hot`），与 iOS `HomeView` 的 `HomePostRow` 区块一致。
+ * 早期这一栏渲染过 `MockData.forumPosts`（虚构作者、虚构互动数），社区接通后
+ * 一律用真实数据。
  */
 @Composable
 fun HomeScreen(
@@ -76,13 +75,10 @@ fun HomeScreen(
     onOpenFeed: (String) -> Unit,
     onOpenPost: (String) -> Unit,
 ) {
-    // 通知区用「为你精选」的第一页，与 SwiftUI 的 HomeView.feedItems 同源；
+    // 通知区用「精选」的第一页：timeline 本身即 selected 流，无需再 filter；
     // 该 scope 未加载过时会自动触发一次请求。
-    val feedProfile = remember(profile.college, profile.degree, profile.grade, profile.interests) {
-        profile.toFeedProfile()
-    }
-    LaunchedEffect(Unit) { feedStore.loadIfNeeded(FeedScope.ForYou, feedProfile) }
-    val feedItems = feedStore.page(FeedScope.ForYou).items
+    LaunchedEffect(Unit) { feedStore.loadIfNeeded(FeedScope.Featured) }
+    val feedItems = feedStore.page(FeedScope.Featured).items
 
     // 社区热议：论坛热榜前三条（热榜内部置顶优先，与经验 tab「热门」同源）。
     LaunchedEffect(Unit) { forumStore.loadHotIfNeeded() }

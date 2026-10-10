@@ -53,7 +53,6 @@ import androidx.compose.ui.unit.dp
 import tech.iflink.seuwiki.R
 import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.UserProfileStore
-import tech.iflink.seuwiki.data.toFeedProfile
 import tech.iflink.seuwiki.design.ConsoleBar
 import tech.iflink.seuwiki.design.ContinuousRoundedShape
 import tech.iflink.seuwiki.design.SeuIcons
@@ -66,36 +65,50 @@ import tech.iflink.seuwiki.ui.ListBottomPadding
 import tech.iflink.seuwiki.ui.LoadingView
 import tech.iflink.seuwiki.ui.ScreenHeader
 import tech.iflink.seuwiki.ui.TabPage
+import tech.iflink.seuwiki.ui.rows.FeaturedCard
 import tech.iflink.seuwiki.ui.rows.FeedItemCard
-import tech.iflink.seuwiki.ui.rows.ForYouCard
 
-/** 资讯 console scope — 为你精选 / 全部 / the 8 categories. */
+/**
+ * 资讯 console scope — 精选 / 一手 / 8 个分类 / 全部。
+ *
+ * 与网页端 2026-10-08 信息架构重构（seu-wiki-v2 commit 998ce5d）后的 tab 行
+ * 逐一对应：[精选, 一手, 教务, 奖助, 竞赛科研, 交流升学, 实习就业, 社团活动,
+ * 生活服务, 校园新闻, 全部]。路由约定见 [FeedStore]：精选走 timeline（selected
+ * 门槛流、cursor 分页），一手 / 分类 / 全部走 pool（全量无门槛、page 分页）。
+ * 个性化推荐（for-you）已随网页端 `/for-you` 页面一起下线。
+ */
 sealed interface FeedScope {
     /** 显示名走资源，编译器保证 key 存在，不会静默渲染成空白胶囊。 */
     @get:StringRes
     val titleRes: Int
 
-    data object ForYou : FeedScope {
-        override val titleRes = R.string.feed_scope_for_you
+    data object Featured : FeedScope {
+        override val titleRes = R.string.feed_scope_featured
     }
 
-    data object All : FeedScope {
-        override val titleRes = R.string.feed_filter_all
+    data object FirstParty : FeedScope {
+        override val titleRes = R.string.feed_scope_first_party
     }
 
     data class Category(val category: FeedCategory) : FeedScope {
         override val titleRes: Int get() = category.labelRes
     }
 
+    data object All : FeedScope {
+        override val titleRes = R.string.feed_filter_all
+    }
+
     companion object {
-        val scopes: List<FeedScope> = listOf(ForYou, All) + FeedCategory.all.map { Category(it) }
+        val scopes: List<FeedScope> =
+            listOf(Featured, FirstParty) + FeedCategory.all.map { Category(it) } + listOf(All)
 
         /** Stable key so `ConsoleBar` selection survives recomposition. */
         val key: (FeedScope) -> String = { scope ->
             when (scope) {
-                ForYou -> "forYou"
-                All -> "all"
+                Featured -> "featured"
+                FirstParty -> "firstParty"
                 is Category -> scope.category.key
+                All -> "all"
             }
         }
     }
@@ -136,9 +149,8 @@ data class FeedFilter(
 /**
  * 资讯.
  *
- * Port of `FeedHomeView`: a console across the two global scopes and the eight
- * categories, a personalised card stream for 为你精选, and a filterable list for
- * 全部 with the filter button appearing in the header only for that scope.
+ * Port of `FeedHomeView`: a console across 精选 / 一手 / the eight categories /
+ * 全部, with the filter button appearing in the header only for 全部.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -148,21 +160,16 @@ fun FeedScreen(
     onOpenProfile: () -> Unit,
     onOpenItem: (String) -> Unit,
 ) {
-    var scopeKey by rememberSaveable { mutableStateOf("forYou") }
-    val scope = FeedScope.scopes.firstOrNull { FeedScope.key(it) == scopeKey } ?: FeedScope.ForYou
+    var scopeKey by rememberSaveable { mutableStateOf("featured") }
+    val scope = FeedScope.scopes.firstOrNull { FeedScope.key(it) == scopeKey } ?: FeedScope.Featured
     var filter by rememberSaveable(stateSaver = FeedFilterSaver) {
         mutableStateOf(FeedFilter())
     }
     var showsFilter by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    // 画像只取 for-you 用到的四个字段，profile 变化时才重建。
-    val feedProfile = remember(profile.college, profile.degree, profile.grade, profile.interests) {
-        profile.toFeedProfile()
-    }
-
     // 首次进入某个 scope 时拉一次；已加载过的 scope 直接复用缓存的分页状态。
-    LaunchedEffect(scopeKey) { store.loadIfNeeded(scope, feedProfile) }
+    LaunchedEffect(scopeKey) { store.loadIfNeeded(scope) }
     val page = store.page(scope)
 
     TabPage {
@@ -215,7 +222,8 @@ fun FeedScreen(
                 FeedScope.All ->
                     if (filter.isActive) stringResource(R.string.feed_empty_filtered) else stringResource(R.string.feed_empty)
                 is FeedScope.Category -> stringResource(R.string.feed_empty_category)
-                FeedScope.ForYou -> stringResource(R.string.feed_empty_for_you)
+                FeedScope.Featured -> stringResource(R.string.feed_empty_featured)
+                FeedScope.FirstParty -> stringResource(R.string.feed_empty)
             }
 
             if (visible.isEmpty() && page.isLoading) {
@@ -240,7 +248,7 @@ fun FeedScreen(
                     // 下拉真的重拉第一页，不是假动画：以前只能退到「全部」再切回来
                     // 才能刷，资讯流这种高频场景下很难用。
                     isRefreshing = page.isLoading,
-                    onRefresh = { store.refresh(scope, feedProfile) },
+                    onRefresh = { store.refresh(scope) },
                     modifier = Modifier.fillMaxSize(),
                 ) {
                 LazyColumn(
@@ -256,8 +264,8 @@ fun FeedScreen(
                     if (page.isOffline) { item(key = "offline") { FeedOfflineBanner() } }
 
                     items(visible, key = { it.id }) { item ->
-                        if (scope == FeedScope.ForYou) {
-                            ForYouCard(item = item, onClick = { onOpenItem(item.id) })
+                        if (scope == FeedScope.Featured) {
+                            FeaturedCard(item = item, onClick = { onOpenItem(item.id) })
                         } else {
                             FeedItemCard(item = item, onClick = { onOpenItem(item.id) })
                         }
@@ -270,15 +278,15 @@ fun FeedScreen(
                 }
                 // 滚到底加载下一页，对应 SwiftUI 的 `.onAppear { if item.id == last { loadMore } }`。
                 // 必须由滚动位置驱动：挂在列表外按 `visible.size` 触发会变成「一有数据就再拉一页」，
-                // 冷启动就把整条 for-you 链路一次性拉完。
+                // 冷启动就把整条链路一次性拉完。
                 val nearEnd by remember { derivedStateOf {
                     val info = listState.layoutInfo
                     val last = info.visibleItemsInfo.lastOrNull()?.index ?: -1
                     last >= 0 && last >= info.totalItemsCount - 2
                 } }
-                LaunchedEffect(nearEnd, page.nextCursor) {
-                    if (nearEnd && page.nextCursor != null) {
-                        store.loadMore(scope, feedProfile)
+                LaunchedEffect(nearEnd, page.hasMore) {
+                    if (nearEnd && page.hasMore) {
+                        store.loadMore(scope)
                     }
                 }
             }

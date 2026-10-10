@@ -49,7 +49,7 @@ object Umami {
         "tools" to ("/tools" to "工具"),
         "search" to ("/search" to "搜索"),
         "profile" to ("/profile" to "个人中心"),
-        "home/feed-list" to ("/home/feed-list" to "为你精选"),
+        "home/feed-list" to ("/home/feed-list" to "精选"),
         "home/forum-list" to ("/home/forum-list" to "社区热议"),
         "feed/detail/{id}" to ("/feed/item" to "资讯详情"),
         "forum/detail/{id}" to ("/forum/post" to "帖子详情"),

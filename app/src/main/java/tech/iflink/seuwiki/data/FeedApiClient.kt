@@ -21,7 +21,7 @@ import java.time.ZoneOffset
  * 契约见 seu-wiki-v2 `packages/contracts/src/site.ts`，对应 iOS 端的
  * `FeedAPIClient`。匿名可访问，登录非必需；已登录时自动附带 Bearer 凭证。
  *
- * 四个接口全是 GET，且 kotlinx-serialization 已在依赖里，所以这里直接用
+ * 三个接口全是 GET，且 kotlinx-serialization 已在依赖里，所以这里直接用
  * `HttpURLConnection` 手写，不引入 Retrofit / OkHttp —— 少两个依赖，也少一层
  * 注解处理器。所有方法都做阻塞 I/O，调用方需在 IO 调度器上执行（见 [FeedStore]）。
  */
@@ -44,7 +44,13 @@ class FeedApiClient(
         coerceInputValues = true
     }
 
-    /** GET /api/site/timeline?channel=all&category=&cursor=&limit= */
+    /**
+     * GET /api/site/timeline?channel=all&cursor=&limit= —— 「精选」tab。
+     *
+     * timeline 本身就是 selected 门槛流（seu-wiki-v2 `publication/timeline.ts` 的
+     * `selectedCondition`），网页端 2026-10-08 重构后只有「精选」还用它，且不传
+     * category；分类 tab 已全部改走 [pool]。
+     */
     suspend fun timeline(category: FeedCategory?, cursor: String?, limit: Int = PageSize): FeedPage {
         val query = buildList {
             add("channel" to "all")
@@ -54,27 +60,6 @@ class FeedApiClient(
         }
         val dto: TimelineResponse = get("/api/site/timeline", query)
         return FeedPage(dto.cards.map { it.item.toFeedItem() }, dto.nextCursor)
-    }
-
-    /** GET /api/site/for-you?college=&degree=&grade=&interests=&cursor=&limit= */
-    suspend fun forYou(
-        college: String,
-        degree: String,
-        grade: String,
-        interests: List<String>,
-        cursor: String?,
-        limit: Int = PageSize,
-    ): FeedPage {
-        val query = buildList {
-            add("limit" to limit.toString())
-            if (college.isNotEmpty()) add("college" to college)
-            if (degree.isNotEmpty()) add("degree" to degree)
-            if (grade.isNotEmpty()) add("grade" to grade)
-            if (interests.isNotEmpty()) add("interests" to interests.joinToString(","))
-            cursor?.let { add("cursor" to it) }
-        }
-        val dto: ForYouResponse = get("/api/site/for-you", query)
-        return FeedPage(dto.items.map { it.toFeedItem() }, dto.nextCursor)
     }
 
     /** GET /api/site/items/{id} —— 详情，列表响应里没有 body / links.original。 */
@@ -90,16 +75,22 @@ class FeedApiClient(
     }
 
     /**
-     * `GET /api/site/pool?q=&type=feed&page=&limit=` —— 资讯池搜索。
+     * `GET /api/site/pool?q=&category=&channel=&type=feed&page=&limit=` —— 资讯池。
      *
-     * 只留 `items`（资讯卡）：响应里的 `docs`（手册 / 经验条目）已随
-     * `/api/site/docs` 信源切换弃用，帖子与手册文章的搜索改走论坛后端的
-     * `GET /api/search`（见 [ForumApiClient.search]）。
+     * 网页端 2026-10-08 信息架构重构后，pool 同时承担两类用途：
      *
-     * [limit] 服务端上限 40，超出会被截断，这里先夹住。
+     * - **资讯流的全量无门槛 tab**（[query] 为空）：「一手」传 `channel=firstParty`、
+     *   分类 tab 传 `category=<key>`、「全部」两者都不传；响应的 `docs` 恒为空数组。
+     * - **全站搜索**（[query] 非空，见 [FeedStore.pool] / [SearchStore]）：只留
+     *   `items`（资讯卡），帖子与手册文章的搜索改走论坛后端的 `GET /api/search`
+     *   （见 [ForumApiClient.search]）。
+     *
+     * 分页是 page（1 起）而不是 cursor；每页固定 40 条，`hasMore = page < pageCount`。
      */
     suspend fun pool(
-        query: String,
+        query: String? = null,
+        category: FeedCategory? = null,
+        channel: String? = null,
         type: String = "feed",
         page: Int = 1,
         limit: Int = 40,
@@ -107,7 +98,9 @@ class FeedApiClient(
         val dto: PoolResponse = get(
             "/api/site/pool",
             buildList {
-                add("q" to query)
+                if (!query.isNullOrBlank()) add("q" to query)
+                category?.let { add("category" to it.key) }
+                channel?.let { add("channel" to it) }
                 add("type" to type)
                 add("page" to page.toString())
                 add("limit" to limit.coerceIn(1, 40).toString())
@@ -139,8 +132,7 @@ class FeedApiClient(
             requestMethod = "GET"
             connectTimeout = 10_000
             readTimeout = 15_000
-            // for-you 是 `private, no-store`，因人而异，不该缓存；timeline 带 ETag，
-            // 由 HttpURLConnection 的条件请求自行协商 304。
+            // timeline / pool 都带 ETag，由 HttpURLConnection 的条件请求自行协商 304。
             setRequestProperty("Accept", "application/json")
             if (token != null) setRequestProperty("Authorization", "Bearer $token")
         }
@@ -173,7 +165,10 @@ data class PoolPage(
     val page: Int,
     val pageCount: Int,
     val total: Int,
-)
+) {
+    /** 网页端规则：还有下一页当且仅当 page < pageCount。 */
+    val hasMore: Boolean get() = page < pageCount
+}
 
 /**
  * `/api/site/items/{id}` 里 app 用到的那部分。
@@ -230,12 +225,6 @@ private data class TimelineResponse(
     @Serializable
     data class TimelineCard(val item: FeedItemSummaryDto)
 }
-
-@Serializable
-private data class ForYouResponse(
-    val items: List<FeedItemSummaryDto> = emptyList(),
-    val nextCursor: String? = null,
-)
 
 @Serializable
 private data class PoolResponse(

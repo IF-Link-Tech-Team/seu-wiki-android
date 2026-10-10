@@ -35,7 +35,7 @@ import tech.iflink.seuwiki.ui.TabPage
 import tech.iflink.seuwiki.ui.search.highlightMatches
 
 /**
- * 与我有关 · 完整列表.
+ * 精选 · 完整列表.
  *
  * Port of `HomeFeedListView`: the 「查看全部」 destination for the Home feed
  * section, a plain list of the notices in a two-line form. This is the compact

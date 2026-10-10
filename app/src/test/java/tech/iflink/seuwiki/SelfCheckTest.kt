@@ -32,13 +32,17 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import tech.iflink.seuwiki.data.AnalyticsClient
+import tech.iflink.seuwiki.data.FeedApiClient
+import tech.iflink.seuwiki.data.FeedStore
 import tech.iflink.seuwiki.data.ForumApiClient
 import tech.iflink.seuwiki.data.ForumStore
 import tech.iflink.seuwiki.data.Umami
+import tech.iflink.seuwiki.models.FeedCategory
 import tech.iflink.seuwiki.models.ForumAuthor
 import tech.iflink.seuwiki.models.ForumPost
 import tech.iflink.seuwiki.models.ForumSort
 import tech.iflink.seuwiki.models.ForumTargetType
+import tech.iflink.seuwiki.ui.feed.FeedScope
 
 /**
  * 关键纯逻辑断言套件 —— 与 iOS 端 `SelfCheck.swift` **逐条对齐**。
@@ -575,6 +579,150 @@ class SelfCheckTest {
             "TabBarClearance 不应再叠加悬浮外边距的 16.dp",
             Regex("""tabBarHeight \+ 16\.dp""").containsMatchIn(src),
         )
+    }
+
+    // MARK: - 资讯信息流（featured / firstParty / pool 路由）
+
+    /**
+     * 网页端 2026-10-08 信息架构重构（seu-wiki-v2 commit 998ce5d）后的客户端契约：
+     * tab 行 [精选, 一手, 8 分类, 全部]；精选走 timeline（selected 门槛流，cursor），
+     * 一手 / 分类 / 全部走 pool（全量无门槛，page 分页，`hasMore = page < pageCount`）；
+     * `/api/site/for-you` 已随网页端 `/for-you` 页面一起删除。
+     */
+    private val timelineJson = """
+        {"cards":[{"item":{"id":"t1","title":"精选条目","source":{"name":"东南大学"},
+        "timelineAt":"2026-10-10T08:00:00Z","selected":true}}],"nextCursor":"cur1"}
+    """.trimIndent()
+
+    private fun poolJson(page: Int, pageCount: Int) = """
+        {"filters":{},"items":[{"id":"p$page","title":"池条目","source":{"name":"教务处"},
+        "timelineAt":"2026-10-10T08:00:00Z"}],"docs":[],"page":$page,"pageCount":$pageCount,
+        "total":100,"todayCount":5,"freshness":"fresh","generatedAt":"2026-10-10T08:00:00Z"}
+    """.trimIndent()
+
+    @Test
+    fun `资讯 tab 顺序与网页端一致`() {
+        // [精选, 一手, 教务…校园新闻, 全部] —— 顺序错了用户看到的就是另一套信息架构。
+        val keys = FeedScope.scopes.map { FeedScope.key(it) }
+        assertEquals(11, keys.size)
+        assertEquals(
+            listOf("featured", "firstParty") + FeedCategory.all.map { it.key } + listOf("all"),
+            keys,
+        )
+    }
+
+    @Test
+    fun `精选走 timeline 且不传 category`() {
+        withLocalApi({ 200 to timelineJson }) { api ->
+            val page = runBlocking {
+                FeedApiClient(baseUrl = api.baseUrl).timeline(category = null, cursor = null)
+            }
+            val req = requireNotNull(api.last)
+            assertEquals("/api/site/timeline", req.path)
+            val q = req.query.orEmpty()
+            assertTrue(q.contains("channel=all"))
+            assertFalse("精选不传 category", Regex("""(^|&)category=""").containsMatchIn(q))
+            assertEquals("cur1", page.nextCursor)
+            assertTrue("timeline 本身是 selected 流，无需客户端再 filter", page.items.single().isSelected)
+        }
+    }
+
+    @Test
+    fun `一手与分类走 pool 带 channel 或 category 且不带 q`() {
+        withLocalApi({ 200 to poolJson(1, 3) }) { api ->
+            val client = FeedApiClient(baseUrl = api.baseUrl)
+
+            runBlocking { client.pool(channel = "firstParty", page = 2) }
+            var req = requireNotNull(api.last)
+            assertEquals("/api/site/pool", req.path)
+            var q = req.query.orEmpty()
+            assertTrue("一手必须带 channel=firstParty", q.contains("channel=firstParty"))
+            assertTrue("pool 是 page 分页", q.contains("page=2"))
+            assertFalse("资讯流 pool 不带 q", Regex("""(^|&)q=""").containsMatchIn(q))
+
+            runBlocking { client.pool(category = FeedCategory.Competition) }
+            req = requireNotNull(api.last)
+            q = req.query.orEmpty()
+            assertTrue("分类 tab 必须带 category=competition", q.contains("category=competition"))
+            assertFalse("分类 tab 不带 channel", Regex("""(^|&)channel=""").containsMatchIn(q))
+
+            runBlocking { client.pool() }
+            q = requireNotNull(api.last).query.orEmpty()
+            assertFalse("全部不带 category", Regex("""(^|&)category=""").containsMatchIn(q))
+            assertFalse("全部不带 channel", Regex("""(^|&)channel=""").containsMatchIn(q))
+            assertFalse("全部不带 q", Regex("""(^|&)q=""").containsMatchIn(q))
+        }
+    }
+
+    @Test
+    fun `pool 响应解析分页字段且 hasMore 规则是 page 小于 pageCount`() {
+        withLocalApi({ 200 to poolJson(1, 3) }) { api ->
+            val page = runBlocking { FeedApiClient(baseUrl = api.baseUrl).pool() }
+            assertEquals(1, page.page)
+            assertEquals(3, page.pageCount)
+            assertEquals(100, page.total)
+            assertTrue("page < pageCount 即还有下一页", page.hasMore)
+            assertEquals("p1", page.items.single().id)
+        }
+        withLocalApi({ 200 to poolJson(3, 3) }) { api ->
+            assertFalse(
+                "最后一页没有下一页",
+                runBlocking { FeedApiClient(baseUrl = api.baseUrl).pool(page = 3) }.hasMore,
+            )
+        }
+    }
+
+    @Test
+    fun `FeedStore 按 scope 路由到 timeline 或 pool 且分页形态正确`() {
+        withLocalApi({ req ->
+            if (req.path == "/api/site/timeline") {
+                200 to timelineJson
+            } else {
+                val p = Regex("""(?:^|&)page=(\d+)""").find(req.query.orEmpty())
+                    ?.groupValues?.get(1)?.toInt() ?: 1
+                200 to poolJson(p, 2)
+            }
+        }) { api ->
+            val store = FeedStore(FeedApiClient(baseUrl = api.baseUrl))
+
+            // 精选 → timeline（cursor）。
+            store.refresh(FeedScope.Featured)
+            waitForStore { store.page(FeedScope.Featured).hasLoaded }
+            assertEquals("/api/site/timeline", requireNotNull(api.last).path)
+            assertEquals("cur1", store.page(FeedScope.Featured).nextCursor)
+            assertNull("timeline scope 不该有页码", store.page(FeedScope.Featured).nextPage)
+
+            // 一手 → pool?channel=firstParty，pageCount=2 → 下一页是 2。
+            store.refresh(FeedScope.FirstParty)
+            waitForStore { store.page(FeedScope.FirstParty).hasLoaded }
+            val req = requireNotNull(api.last)
+            assertEquals("/api/site/pool", req.path)
+            assertTrue(req.query.orEmpty().contains("channel=firstParty"))
+            assertEquals(2, store.page(FeedScope.FirstParty).nextPage)
+            assertTrue(store.page(FeedScope.FirstParty).hasMore)
+
+            // 翻到最后一页后 hasMore 收口。
+            store.loadMore(FeedScope.FirstParty)
+            waitForStore { store.page(FeedScope.FirstParty).items.size == 2 }
+            assertNull("page == pageCount 后没有下一页", store.page(FeedScope.FirstParty).nextPage)
+            assertFalse(store.page(FeedScope.FirstParty).hasMore)
+
+            // 分类 → pool?category=<key>。
+            store.refresh(FeedScope.Category(FeedCategory.Aid))
+            waitForStore { store.page(FeedScope.Category(FeedCategory.Aid)).hasLoaded }
+            assertEquals("/api/site/pool", requireNotNull(api.last).path)
+            assertTrue(requireNotNull(api.last).query.orEmpty().contains("category=aid"))
+        }
+    }
+
+    @Test
+    fun `for-you 接口已彻底下线`() {
+        // 源码级回归锁：网页端 /for-you 已 301，客户端不得再请求 /api/site/for-you。
+        val client = File("src/main/java/tech/iflink/seuwiki/data/FeedApiClient.kt")
+        assertTrue("应当找到 FeedApiClient.kt", client.isFile)
+        val src = client.readText(Charsets.UTF_8)
+        assertFalse("不得再请求 for-you 接口", src.contains("/api/site/for-you"))
+        assertFalse("forYou 方法应当已删除", Regex("""fun forYou""").containsMatchIn(src))
     }
 
     // MARK: - 论坛：免登录（Bearer）链路

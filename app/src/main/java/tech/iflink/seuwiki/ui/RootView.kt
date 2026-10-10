@@ -367,10 +367,10 @@ fun RootView(
                 )
             }
             composable(Routes.HOME_FEED_LIST) {
-                // 「为你精选」里的精选条目取自真实 for-you 结果，不再是本地假数据。
-                val selected = feedStore.page(FeedScope.ForYou).items.filter { it.isSelected }
+                // 「精选」列表取自真实 timeline 结果（selected 门槛流），不再是本地假数据。
+                val featured = feedStore.page(FeedScope.Featured).items
                 HomeFeedListScreen(
-                    items = selected,
+                    items = featured,
                     onBack = { navController.popBackStack() },
                     onOpenItem = { navController.navigate(Routes.feedDetail(it)) },
                 )
