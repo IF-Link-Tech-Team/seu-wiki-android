@@ -16,8 +16,8 @@ import tech.iflink.seuwiki.models.Course
 /**
  * User profile and app-level state.
  *
- * The college / degree / grade / interests fields are the same `for-you` profile
- * parameters seu-wiki-v2 expects on `/api/site/for-you`.
+ * The college / degree / grade / interests 画像字段保留给个人页编辑与其他功能；
+ * 资讯流自 2026-10 网页端删除 `/for-you` 后不再消费它们。
  *
  * Persistence goes through [ProfilePersistence] — the counterpart of the iOS
  * `ProfileStorage` — so both clients persist the same set of keys, record a

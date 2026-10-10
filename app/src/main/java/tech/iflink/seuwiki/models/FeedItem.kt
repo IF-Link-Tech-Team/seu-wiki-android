@@ -76,5 +76,4 @@ data class FeedItem(
     val isSelected: Boolean = false,
     val audience: CampusAudience = CampusAudience(),
     val matchReasons: List<String> = emptyList(),
-    val channel: String = "news",
 )
