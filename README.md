@@ -9,10 +9,15 @@
 
 ```bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk@17   # 不设会直接失败
-./gradlew assembleDebug assembleRelease testDebugUnitTest
+./gradlew assembleDebug testDebugUnitTest
 ```
 
 `JAVA_HOME` 是硬要求：本机默认 JDK 版本高于 AGP 支持范围，不显式指定 17 构建起不来。
+
+`assembleRelease` 不在默认命令里：缺签名材料（`~/.seu-wiki-android/keystore.properties`，
+或用 `SEU_WIKI_KEYSTORE` 指定路径）时 release 构建**直接报错**，不会静默产出未签名包。
+只想本地验证 release 变体能编过、R8 规则没问题时，显式加 `-PallowUnsignedRelease=true`
+（产物未签名，装不上、不能发布）。正式发布见 `AGENTS.md` 的「提交与发布」。
 
 自检是 Robolectric 跑的，**不需要真机或模拟器**：
 
@@ -41,7 +46,7 @@ app/src/main/java/tech/iflink/seuwiki/
 ├── data/                # API 客户端 + 状态容器（ViewModel）+ 落盘
 ├── design/              # 设计系统：品牌色、卡片、图标映射、共用组件
 ├── models/              # 数据模型（对齐真实 API 契约）
-└── ui/                  # 页面：home / feed / experience / tools / search / profile / detail
+└── ui/                  # 页面：home / feed / forum / experience / tools / search / profile / detail；rows/ 是共用行组件
 ```
 
 - `ui/RootView.kt` 是导航宿主，也是 tab 栏所在（`BottomTabBar`）。
@@ -102,7 +107,7 @@ iOS 用 SwiftUI 原生控件，本端用 Material 原生控件 —— 同一个�
 
 ## 自检
 
-`app/src/test/java/tech/iflink/seuwiki/SelfCheckTest.kt`，80+ 条用例，**每一条都真的打生产代码**。
+`app/src/test/java/tech/iflink/seuwiki/SelfCheckTest.kt`，90+ 条用例，**每一条都真的打生产代码**。
 
 它抓到过几个代码审查看不出来的 bug：日期解析（后端混用带时刻、只有日期、6 位微秒
 三种格式）、分页合并去重、HTML 实体与段落粘连、slug 的 `%2F` 编码（不编码直接 404）、
