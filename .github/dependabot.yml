@@ -5,6 +5,19 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # 交接期冻结大版本升级：AGP 9 / Gradle 9 需成对专项迁移并全量回归，
+      # OkHttp 5、core-ktx 大版本依赖新工具链，留待后续团队按需升级（2026-10）。
+      - dependency-name: "com.android.application"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "com.android.library"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "gradle-wrapper"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "com.squareup.okhttp3:okhttp"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "androidx.core:core-ktx"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
