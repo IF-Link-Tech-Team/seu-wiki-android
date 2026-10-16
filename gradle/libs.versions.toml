@@ -2,7 +2,7 @@
 junit = "4.13.2"
 robolectric = "4.17"
 agp = "8.13.2"
-kotlin = "2.4.20"
+kotlin = "2.4.21"
 coreKtx = "1.18.0"
 lifecycle = "2.10.0"
 activityCompose = "1.13.0"
