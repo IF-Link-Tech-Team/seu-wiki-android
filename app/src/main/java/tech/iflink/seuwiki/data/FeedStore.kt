@@ -23,8 +23,8 @@ import tech.iflink.seuwiki.ui.feed.FeedScope
  * 换成 ViewModel 之后请求挂在 [viewModelScope] 上，`onCleared` 时统一取消，
  * 实例本身由 `viewModel()` 在配置变更时保留。
  *
- * 每个 console scope（精选 / 一手 / 各分类 / 全部）各自维护一份分页状态。
- * 「精选」走 timeline（cursor 分页），其余 scope 走 pool（page 分页，
+ * 每个内容 scope（精选 / 各分类 / 全部）各自维护一份分页状态，订阅仅占位。
+ * 「精选」走 timeline（cursor 分页），分类与全部走 pool（page 分页，
  * `hasMore = page < pageCount`），两种分页在同一套 [PageState] 里并存。
  *
  * **网络失败不再回退假数据**（S-10）。原来的实现会静默塞一份 `MockData` 顶上，
@@ -53,7 +53,7 @@ class FeedStore(
         val items: List<FeedItem> = emptyList(),
         /** timeline（精选）的 keyset 游标；pool 系 scope 恒为 null。 */
         val nextCursor: String? = null,
-        /** pool 系 scope（一手 / 分类 / 全部）的下一页页码；精选恒为 null。 */
+        /** pool 系 scope（分类 / 全部）的下一页页码；精选恒为 null。 */
         val nextPage: Int? = null,
         val isLoading: Boolean = false,
         val isLoadingMore: Boolean = false,
@@ -125,6 +125,7 @@ class FeedStore(
 
     /** 首次进入某个 scope 时加载；已加载过的直接复用。 */
     fun loadIfNeeded(scope: FeedScope) {
+        if (!scope.loadsContent) return
         val state = page(scope)
         if (state.hasLoaded || state.isLoading) return
         refresh(scope)
@@ -132,6 +133,7 @@ class FeedStore(
 
     /** 下拉刷新 / 首次加载：成功后重置分页，失败保留旧内容并标记离线。 */
     fun refresh(scope: FeedScope) {
+        if (!scope.loadsContent) return
         if (page(scope).isLoading) return
         val key = FeedScope.key(scope)
         // 换代：让此刻仍在途的 loadMore 失效。
@@ -177,6 +179,7 @@ class FeedStore(
 
     /** 滚动到底加载下一页。失败静默，下次滚到底会再试。 */
     fun loadMore(scope: FeedScope) {
+        if (!scope.loadsContent) return
         val state = page(scope)
         if (!state.hasLoaded || state.isLoading || state.isLoadingMore ||
             state.isOffline || !state.hasMore
@@ -240,15 +243,15 @@ class FeedStore(
 
     /**
      * pool 系 scope 的路由（网页端 2026-10-08 重构后的约定）：
-     * 一手 → `pool?channel=firstParty`，分类 → `pool?category=<key>`，全部 → `pool`。
+     * 分类 → `pool?category=<key>`，全部 → `pool`。
      * 全量无门槛，page 分页，`hasMore = page < pageCount`。
      */
     private suspend fun fetchPool(scope: FeedScope, page: Int): PoolPage = when (scope) {
-        FeedScope.FirstParty -> client.pool(channel = "firstParty", page = page)
         is FeedScope.Category -> client.pool(category = scope.category, page = page)
         FeedScope.All -> client.pool(page = page)
         // 精选走 timeline（cursor），不会到这里。
         FeedScope.Featured -> error("Featured 是 timeline scope，不该走 pool")
+        FeedScope.Subscription -> error("Subscription 仅占位，不该走 pool")
     }
 
     /**
