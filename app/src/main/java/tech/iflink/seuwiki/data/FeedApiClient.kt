@@ -75,12 +75,12 @@ class FeedApiClient(
     }
 
     /**
-     * `GET /api/site/pool?q=&category=&channel=&type=feed&page=&limit=` —— 资讯池。
+     * `GET /api/site/pool?q=&category=&type=feed&page=&limit=` —— 资讯池。
      *
      * 网页端 2026-10-08 信息架构重构后，pool 同时承担两类用途：
      *
-     * - **资讯流的全量无门槛 tab**（[query] 为空）：「一手」传 `channel=firstParty`、
-     *   分类 tab 传 `category=<key>`、「全部」两者都不传；响应的 `docs` 恒为空数组。
+     * - **资讯流的全量无门槛 tab**（[query] 为空）：分类传 `category=<key>`，
+     *   「全部」不传分类；响应的 `docs` 恒为空数组。
      * - **全站搜索**（[query] 非空，见 [FeedStore.pool] / [SearchStore]）：只留
      *   `items`（资讯卡），帖子与手册文章的搜索改走论坛后端的 `GET /api/search`
      *   （见 [ForumApiClient.search]）。
@@ -90,7 +90,6 @@ class FeedApiClient(
     suspend fun pool(
         query: String? = null,
         category: FeedCategory? = null,
-        channel: String? = null,
         type: String = "feed",
         page: Int = 1,
         limit: Int = 40,
@@ -100,7 +99,6 @@ class FeedApiClient(
             buildList {
                 if (!query.isNullOrBlank()) add("q" to query)
                 category?.let { add("category" to it.key) }
-                channel?.let { add("channel" to it) }
                 add("type" to type)
                 add("page" to page.toString())
                 add("limit" to limit.coerceIn(1, 40).toString())

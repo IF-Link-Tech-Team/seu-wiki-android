@@ -69,12 +69,12 @@ import tech.iflink.seuwiki.ui.rows.FeaturedCard
 import tech.iflink.seuwiki.ui.rows.FeedItemCard
 
 /**
- * 资讯 console scope — 精选 / 一手 / 8 个分类 / 全部。
+ * 资讯 console scope — 精选 / 订阅占位 / 8 个分类 / 全部。
  *
  * 与网页端 2026-10-08 信息架构重构（seu-wiki-v2 commit 998ce5d）后的 tab 行
- * 逐一对应：[精选, 一手, 教务, 奖助, 竞赛科研, 交流升学, 实习就业, 社团活动,
+ * 逐一对应：[精选, 订阅, 教务, 奖助, 竞赛科研, 交流升学, 实习就业, 社团活动,
  * 生活服务, 校园新闻, 全部]。路由约定见 [FeedStore]：精选走 timeline（selected
- * 门槛流、cursor 分页），一手 / 分类 / 全部走 pool（全量无门槛、page 分页）。
+ * 门槛流、cursor 分页），分类 / 全部走 pool（全量无门槛、page 分页），订阅不请求内容。
  * 个性化推荐（for-you）已随网页端 `/for-you` 页面一起下线。
  */
 sealed interface FeedScope {
@@ -82,12 +82,14 @@ sealed interface FeedScope {
     @get:StringRes
     val titleRes: Int
 
+    val loadsContent: Boolean get() = this != Subscription
+
     data object Featured : FeedScope {
         override val titleRes = R.string.feed_scope_featured
     }
 
-    data object FirstParty : FeedScope {
-        override val titleRes = R.string.feed_scope_first_party
+    data object Subscription : FeedScope {
+        override val titleRes = R.string.feed_scope_subscription
     }
 
     data class Category(val category: FeedCategory) : FeedScope {
@@ -100,13 +102,13 @@ sealed interface FeedScope {
 
     companion object {
         val scopes: List<FeedScope> =
-            listOf(Featured, FirstParty) + FeedCategory.all.map { Category(it) } + listOf(All)
+            listOf(Featured, Subscription) + FeedCategory.all.map { Category(it) } + listOf(All)
 
         /** Stable key so `ConsoleBar` selection survives recomposition. */
         val key: (FeedScope) -> String = { scope ->
             when (scope) {
                 Featured -> "featured"
-                FirstParty -> "firstParty"
+                Subscription -> "subscription"
                 is Category -> scope.category.key
                 All -> "all"
             }
@@ -149,7 +151,7 @@ data class FeedFilter(
 /**
  * 资讯.
  *
- * Port of `FeedHomeView`: a console across 精选 / 一手 / the eight categories /
+ * Port of `FeedHomeView`: a console across 精选 / 订阅 / the eight categories /
  * 全部, with the filter button appearing in the header only for 全部.
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -223,7 +225,7 @@ fun FeedScreen(
                     if (filter.isActive) stringResource(R.string.feed_empty_filtered) else stringResource(R.string.feed_empty)
                 is FeedScope.Category -> stringResource(R.string.feed_empty_category)
                 FeedScope.Featured -> stringResource(R.string.feed_empty_featured)
-                FeedScope.FirstParty -> stringResource(R.string.feed_empty)
+                FeedScope.Subscription -> stringResource(R.string.feed_subscription_description)
             }
 
             if (visible.isEmpty() && page.isLoading) {
@@ -231,7 +233,9 @@ fun FeedScreen(
             } else if (visible.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
                     EmptyStateView(
-                        title = stringResource(R.string.feed_empty),
+                        title = stringResource(
+                            if (scope == FeedScope.Subscription) R.string.feed_subscription_unavailable else R.string.feed_empty,
+                        ),
                         description = emptyMessage,
                         icon = {
                             Icon(

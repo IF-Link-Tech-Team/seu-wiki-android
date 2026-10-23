@@ -240,7 +240,7 @@ fun FeaturedCard(
     }
 }
 
-/** 资讯 · 一手 / 分类 / 全部 list card — the denser sibling of [FeaturedCard]. */
+/** 资讯 · 分类 / 全部 list card — the denser sibling of [FeaturedCard]. */
 @Composable
 fun FeedItemCard(
     item: FeedItem,

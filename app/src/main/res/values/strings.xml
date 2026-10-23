@@ -77,9 +77,11 @@
 
     <!-- ============ 资讯 ============ -->
     <string name="feed_title">资讯</string>
-    <!-- console tab 行：精选 / 一手 / 8 分类 / 全部，与网页端 2026-10-08 重构后的顺序一致。 -->
+    <!-- console tab 行：精选 / 订阅占位 / 8 分类 / 全部。 -->
     <string name="feed_scope_featured">精选</string>
-    <string name="feed_scope_first_party">一手</string>
+    <string name="feed_scope_subscription">订阅</string>
+    <string name="feed_subscription_unavailable">订阅尚未开放</string>
+    <string name="feed_subscription_description">个性化规则仍在设计中</string>
     <string name="feed_filter">筛选</string>
     <string name="feed_filter_done">完成</string>
     <string name="feed_filter_college">学院</string>

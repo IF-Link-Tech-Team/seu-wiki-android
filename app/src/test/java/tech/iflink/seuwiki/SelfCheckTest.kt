@@ -581,12 +581,12 @@ class SelfCheckTest {
         )
     }
 
-    // MARK: - 资讯信息流（featured / firstParty / pool 路由）
+    // MARK: - 资讯信息流（featured / subscription / pool 路由）
 
     /**
      * 网页端 2026-10-08 信息架构重构（seu-wiki-v2 commit 998ce5d）后的客户端契约：
-     * tab 行 [精选, 一手, 8 分类, 全部]；精选走 timeline（selected 门槛流，cursor），
-     * 一手 / 分类 / 全部走 pool（全量无门槛，page 分页，`hasMore = page < pageCount`）；
+     * tab 行 [精选, 订阅占位, 8 分类, 全部]；精选走 timeline（selected 门槛流，cursor），
+     * 分类 / 全部走 pool（全量无门槛，page 分页，`hasMore = page < pageCount`）；
      * `/api/site/for-you` 已随网页端 `/for-you` 页面一起删除。
      */
     private val timelineJson = """
@@ -602,11 +602,11 @@ class SelfCheckTest {
 
     @Test
     fun `资讯 tab 顺序与网页端一致`() {
-        // [精选, 一手, 教务…校园新闻, 全部] —— 顺序错了用户看到的就是另一套信息架构。
+        // [精选, 订阅, 教务…校园新闻, 全部]。
         val keys = FeedScope.scopes.map { FeedScope.key(it) }
         assertEquals(11, keys.size)
         assertEquals(
-            listOf("featured", "firstParty") + FeedCategory.all.map { it.key } + listOf("all"),
+            listOf("featured", "subscription") + FeedCategory.all.map { it.key } + listOf("all"),
             keys,
         )
     }
@@ -628,22 +628,29 @@ class SelfCheckTest {
     }
 
     @Test
-    fun `一手与分类走 pool 带 channel 或 category 且不带 q`() {
+    fun `旧资讯响应附加字段被忽略且不丢条目`() {
+        val legacyJson = timelineJson.replace("\"selected\":true", "\"selected\":true,\"firstParty\":true")
+        withLocalApi({ 200 to legacyJson }) { api ->
+            val page = runBlocking { FeedApiClient(baseUrl = api.baseUrl).timeline(null, null) }
+            assertEquals("t1", page.items.single().id)
+            assertEquals("精选条目", page.items.single().title)
+            assertEquals("cur1", page.nextCursor)
+        }
+    }
+
+    @Test
+    fun `分类走 pool 带 category 且不带 channel 或 q`() {
         withLocalApi({ 200 to poolJson(1, 3) }) { api ->
             val client = FeedApiClient(baseUrl = api.baseUrl)
 
-            runBlocking { client.pool(channel = "firstParty", page = 2) }
-            var req = requireNotNull(api.last)
+            runBlocking { client.pool(category = FeedCategory.Competition, page = 2) }
+            val req = requireNotNull(api.last)
             assertEquals("/api/site/pool", req.path)
             var q = req.query.orEmpty()
-            assertTrue("一手必须带 channel=firstParty", q.contains("channel=firstParty"))
+            assertTrue("分类 tab 必须带 category=competition", q.contains("category=competition"))
             assertTrue("pool 是 page 分页", q.contains("page=2"))
             assertFalse("资讯流 pool 不带 q", Regex("""(^|&)q=""").containsMatchIn(q))
 
-            runBlocking { client.pool(category = FeedCategory.Competition) }
-            req = requireNotNull(api.last)
-            q = req.query.orEmpty()
-            assertTrue("分类 tab 必须带 category=competition", q.contains("category=competition"))
             assertFalse("分类 tab 不带 channel", Regex("""(^|&)channel=""").containsMatchIn(q))
 
             runBlocking { client.pool() }
@@ -692,26 +699,40 @@ class SelfCheckTest {
             assertEquals("cur1", store.page(FeedScope.Featured).nextCursor)
             assertNull("timeline scope 不该有页码", store.page(FeedScope.Featured).nextPage)
 
-            // 一手 → pool?channel=firstParty，pageCount=2 → 下一页是 2。
-            store.refresh(FeedScope.FirstParty)
-            waitForStore { store.page(FeedScope.FirstParty).hasLoaded }
+            // 全部 → pool，pageCount=2 → 下一页是 2。
+            store.refresh(FeedScope.All)
+            waitForStore { store.page(FeedScope.All).hasLoaded }
             val req = requireNotNull(api.last)
             assertEquals("/api/site/pool", req.path)
-            assertTrue(req.query.orEmpty().contains("channel=firstParty"))
-            assertEquals(2, store.page(FeedScope.FirstParty).nextPage)
-            assertTrue(store.page(FeedScope.FirstParty).hasMore)
+            assertFalse(req.query.orEmpty().contains("channel="))
+            assertEquals(2, store.page(FeedScope.All).nextPage)
+            assertTrue(store.page(FeedScope.All).hasMore)
 
             // 翻到最后一页后 hasMore 收口。
-            store.loadMore(FeedScope.FirstParty)
-            waitForStore { store.page(FeedScope.FirstParty).items.size == 2 }
-            assertNull("page == pageCount 后没有下一页", store.page(FeedScope.FirstParty).nextPage)
-            assertFalse(store.page(FeedScope.FirstParty).hasMore)
+            store.loadMore(FeedScope.All)
+            waitForStore { store.page(FeedScope.All).items.size == 2 }
+            assertNull("page == pageCount 后没有下一页", store.page(FeedScope.All).nextPage)
+            assertFalse(store.page(FeedScope.All).hasMore)
 
             // 分类 → pool?category=<key>。
             store.refresh(FeedScope.Category(FeedCategory.Aid))
             waitForStore { store.page(FeedScope.Category(FeedCategory.Aid)).hasLoaded }
             assertEquals("/api/site/pool", requireNotNull(api.last).path)
             assertTrue(requireNotNull(api.last).query.orEmpty().contains("category=aid"))
+        }
+    }
+
+    @Test
+    fun `订阅占位的加载刷新分页不请求网络`() {
+        withLocalApi({ 200 to poolJson(1, 2) }) { api ->
+            val store = FeedStore(FeedApiClient(baseUrl = api.baseUrl))
+            assertFalse(FeedScope.Subscription.loadsContent)
+            assertTrue(FeedScope.scopes.filter { it != FeedScope.Subscription }.all { it.loadsContent })
+            store.loadIfNeeded(FeedScope.Subscription)
+            store.refresh(FeedScope.Subscription)
+            store.loadMore(FeedScope.Subscription)
+            assertNull(api.last)
+            assertEquals(FeedStore.PageState(), store.page(FeedScope.Subscription))
         }
     }
 
