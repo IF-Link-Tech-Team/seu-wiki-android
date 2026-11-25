@@ -213,6 +213,7 @@ private data class FeedItemSummaryDto(
     val campus: CampusDto? = null,
     val matchReasons: List<String>? = null,
     val rankScore: Double? = null,
+    val activitySchedule: tech.iflink.seuwiki.models.ActivitySchedule? = null,
 )
 
 @Serializable
@@ -276,6 +277,7 @@ private fun FeedItemSummaryDto.toFeedItem(): FeedItem {
         isSelected = selected,
         audience = audience,
         matchReasons = matchReasons.orEmpty(),
+        activitySchedule = activitySchedule,
     )
 }
 

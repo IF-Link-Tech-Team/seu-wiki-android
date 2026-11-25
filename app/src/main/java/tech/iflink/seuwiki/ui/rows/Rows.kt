@@ -225,6 +225,9 @@ fun FeaturedCard(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        item.activitySchedule?.lines()?.forEach { line ->
+            Text(text = line, style = SeuType.Caption, color = colors.secondaryLabel)
+        }
         if (item.matchReasons.isNotEmpty()) {
             // 命中理由来自接口，条数不固定（MockData 最多 2 条），用 FlowRow 换行而不是
             // 裁切 —— 这也是全项目其它 chip 行统一的做法。
