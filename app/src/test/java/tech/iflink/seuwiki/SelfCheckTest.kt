@@ -62,6 +62,16 @@ import tech.iflink.seuwiki.ui.feed.FeedScope
 @Config(sdk = [34])
 class SelfCheckTest {
 
+    @Test
+    fun `活动时间保留原文及未注明的边界`() {
+        val entry = tech.iflink.seuwiki.models.ActivityScheduleEntry(
+            name = "讲座", registrationEnd = tech.iflink.seuwiki.models.ActivityScheduleTime("11月29日 20:00"),
+            activityStart = tech.iflink.seuwiki.models.ActivityScheduleTime("12月5日 8:30"),
+        )
+        assertEquals(listOf("报名：截至 11月29日 20:00", "活动：12月5日 8:30 开始 · 结束未注明"), entry.lines())
+        assertEquals(listOf("活动已取消"), tech.iflink.seuwiki.models.ActivitySchedule(notice = "活动已取消").lines())
+    }
+
     /** 品牌深绿，仅用于让 HTML 解析器有确定的强调色，不参与断言。 */
     private val BRAND = Color(0xFF0E5A46)
 
